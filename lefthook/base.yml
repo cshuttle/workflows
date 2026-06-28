@@ -4,8 +4,9 @@
 # every repo points at it. These are a local safety net mirroring the spirit of
 # CI (server-side branch protection isn't available on the Free GitHub plan).
 #
-# Per clone:  lefthook install
-# Tools expected on PATH: shellcheck, gitleaks, yamllint.
+# Per clone:  lefthook install   (re-run after a pre-push change to wire the hook)
+# Tools on PATH: shellcheck, gitleaks, yamllint (pre-commit);
+#                kustomize, helm, kubeconform (pre-push, GitOps repos only).
 pre-commit:
   parallel: true
   commands:
@@ -24,3 +25,16 @@ pre-commit:
     whitespace-conflicts:
       # built-in: flags conflict markers + trailing whitespace, no extra tool
       run: git diff --cached --check
+
+# Heavier checks run before push (not on every commit). The kustomize render is
+# the local twin of the kustomize-validate CI workflow — same script. No-ops in
+# repos without kustomizations or without the tools, and skips on a fetch
+# failure, so it never blocks a push for environmental reasons (advisory).
+pre-push:
+  commands:
+    kustomize-validate:
+      run: |
+        s="${TMPDIR:-/tmp}/cshuttle-kustomize-validate.sh"
+        curl -sSfL https://raw.githubusercontent.com/cshuttle/workflows/main/scripts/kustomize-validate.sh -o "$s" \
+          || { echo "kustomize-validate: could not fetch script — skip"; exit 0; }
+        bash "$s" .
