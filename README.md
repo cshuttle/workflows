@@ -1,11 +1,14 @@
 # workflows
 
-Shared **reusable GitHub Actions workflows** for the `cshuttle` homelab estate.
+Shared **CI definitions** for the `cshuttle` homelab estate: reusable GitHub
+Actions workflows (`.github/workflows/`) and the shared **Lefthook** git-hook
+config (`lefthook/`).
 
-This repo is intentionally **public** so the private GitOps repos can call its
-workflows via `uses:` — cross-repo reusable workflows between *private* repos
-require a paid GitHub plan, but a public host is callable by any repo on any
-plan. Only generic CI recipes live here; no secrets, manifests, or hostnames.
+This repo is intentionally **public** so the private GitOps repos can consume it
+— cross-repo reusable workflows between *private* repos require a paid GitHub
+plan, but a public host is callable by any repo on any plan, and Lefthook
+`remotes:` likewise pull from here. Only generic CI recipes live here; no
+secrets, manifests, or hostnames.
 
 ## Available workflows
 
@@ -27,3 +30,21 @@ jobs:
 ```
 
 Optional input `paths` (space-separated roots to scan; default `.`).
+
+## Git hooks
+
+### `lefthook/base.yml`
+
+Shared advisory pre-commit hooks (shellcheck, gitleaks, yamllint, whitespace /
+merge-conflict). Consume from any repo with a tiny `lefthook.yml`:
+
+```yaml
+remotes:
+  - git_url: https://github.com/cshuttle/workflows
+    ref: main
+    configs:
+      - lefthook/base.yml
+```
+
+Then `lefthook install` per clone. Tools expected on PATH: `lefthook`,
+`shellcheck`, `gitleaks`, `yamllint`.

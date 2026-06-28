@@ -1,0 +1,24 @@
+# Shared advisory git hooks for the cshuttle/* homelab (Lefthook).
+#
+# Referenced by each repo's lefthook.yml via `remotes:` — define once here,
+# every repo points at it. These are a local safety net mirroring the spirit of
+# CI (server-side branch protection isn't available on the Free GitHub plan).
+#
+# Per clone:  lefthook install
+# Tools expected on PATH: shellcheck, gitleaks, yamllint.
+pre-commit:
+  parallel: true
+  commands:
+    shellcheck:
+      glob: "*.sh"
+      run: shellcheck {staged_files}
+    gitleaks:
+      run: gitleaks protect --staged --redact --no-banner
+    yaml-lint:
+      glob: "*.{yml,yaml}"
+      # SOPS-encrypted / Helm-templated files aren't plain YAML
+      exclude: '\.(age|sops\.ya?ml)$|/templates/'
+      run: yamllint -d relaxed {staged_files}
+    whitespace-conflicts:
+      # built-in: flags conflict markers + trailing whitespace, no extra tool
+      run: git diff --cached --check
