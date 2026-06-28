@@ -20,7 +20,7 @@ pre-commit:
       exclude: '\.(age|sops\.ya?ml)$|/templates/'
       # relaxed + line-length off: keep real errors (syntax, dup keys) but drop
       # the noisy "line too long" warnings (helm values, URLs, long comments).
-      run: yamllint -d "{extends: relaxed, rules: {line-length: disable}}" {staged_files}
+      run: 'yamllint -d "{extends: relaxed, rules: {line-length: disable}}" {staged_files}'
     whitespace-conflicts:
       # built-in: flags conflict markers + trailing whitespace, no extra tool
       run: git diff --cached --check
