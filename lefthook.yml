@@ -1,0 +1,11 @@
+# Advisory git hooks via Lefthook — config is centralized in cshuttle/workflows
+# (lefthook/base.yml), pulled via `remotes` so the hook set is defined once.
+# That host repo is branch-protected, so `ref: main` can't be force-pushed.
+#
+# Per clone:  lefthook install
+# Tools expected on PATH: lefthook, shellcheck, gitleaks, yamllint.
+remotes:
+  - git_url: https://github.com/cshuttle/workflows
+    ref: main
+    configs:
+      - lefthook/base.yml
