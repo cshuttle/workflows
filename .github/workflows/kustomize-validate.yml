@@ -1,0 +1,78 @@
+# Reusable kustomize render + schema validation.
+#
+# Builds every kustomization root in the caller's checkout with
+# `kustomize build --enable-helm` and schema-validates the output with
+# kubeconform. Catches a commit that breaks a render before ArgoCD pulls it.
+#
+# Callers (one per GitOps content repo) need nothing but:
+#
+#   jobs:
+#     kustomize:
+#       uses: cshuttle/k8s/.github/workflows/kustomize-validate.yml@main
+#
+# The content repos are self-contained (their cross-repo references are ArgoCD
+# `repoURL` data, not kustomize remote bases), so a plain self-checkout renders
+# them — no submodules or PAT required, unlike the umbrella's submodule-smoke.
+name: kustomize-validate
+
+on:
+  workflow_call:
+    inputs:
+      paths:
+        description: Space-separated roots to scan for kustomization.yaml
+        type: string
+        default: "."
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    env:
+      KUSTOMIZE_VERSION: v5.7.0
+      KUBECONFORM_VERSION: v0.6.7
+      # Pin to Helm 3.x: kustomize v5.7.0 still probes with the deprecated
+      # `helm version -c`, which Helm 4 removed. setup-helm defaults to the
+      # latest (now Helm 4), so an unpinned install breaks every --enable-helm
+      # render with "unknown shorthand flag: 'c' in -c".
+      HELM_VERSION: v3.21.1
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: azure/setup-helm@v4   # `kustomize build --enable-helm` needs helm on PATH
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: install kustomize + kubeconform
+        run: |
+          curl -sSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar xz
+          sudo install -m 0755 kustomize /usr/local/bin/kustomize
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+
+      - name: build + validate all kustomization roots
+        run: |
+          set -uo pipefail
+          built=0; skipped=0; failed=0; fails=""
+          while IFS= read -r kf; do
+            d="${kf%/kustomization.yaml}"
+            if out="$(kustomize build --enable-helm "$d" 2>/tmp/err)"; then
+              # Schema-validate; -ignore-missing-schemas tolerates the CRD-heavy
+              # output (cilium, cert-manager, eso, awx-operator, cnpg, ...).
+              if printf '%s' "$out" | kubeconform -strict -summary -ignore-missing-schemas >/dev/null 2>/tmp/kc; then
+                built=$((built+1))
+              else
+                failed=$((failed+1)); fails="${fails}  SCHEMA  $d\n$(sed 's/^/          /' /tmp/kc)\n"
+              fi
+            elif compgen -G "$d/*.sops.yaml" >/dev/null || compgen -G "$d/*.age" >/dev/null; then
+              # References a SOPS/AGE-encrypted resource; can't render without the
+              # key — expected, not a failure.
+              skipped=$((skipped+1)); echo "  SKIP (sops)  $d"
+            else
+              failed=$((failed+1)); fails="${fails}  BUILD   $d\n$(sed 's/^/          /' /tmp/err)\n"
+            fi
+          done < <(find ${{ inputs.paths }} -name kustomization.yaml | sort)
+
+          echo "----------------------------------------"
+          echo "built=$built  skipped=$skipped  failed=$failed"
+          if [ "$failed" -gt 0 ]; then
+            echo "----- failures -----"; printf "%b" "$fails"; exit 1
+          fi
