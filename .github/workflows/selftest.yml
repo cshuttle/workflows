@@ -1,0 +1,51 @@
+# CI for this repo itself. It is the supply-chain root for every cshuttle/* repo
+# (the reusable workflows here + the shared Lefthook config in lefthook/), so a
+# bad edit breaks them all — validate before it merges. See issue #4.
+name: selftest
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lefthook-config:
+    runs-on: ubuntu-latest
+    env:
+      LEFTHOOK_VERSION: 2.1.9
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: YAML-parse lefthook/base.yml (independent of lefthook)
+        # Catches the unquoted-scalar class that broke every fresh `lefthook
+        # install`. Ruby ships on the runner — no pip/PyYAML dependency.
+        run: |
+          ruby -ryaml -e "YAML.safe_load(File.read('lefthook/base.yml')); puts 'base.yml is valid YAML'"
+
+      - name: lefthook validate
+        # base.yml is a standalone Lefthook config (pre-commit commands); validate
+        # it as one in a throwaway git repo. NB: download the binary OUTSIDE the
+        # repo — a ./lefthook file would collide with the lefthook/ directory.
+        run: |
+          curl -sSL "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_x86_64" -o /tmp/lefthook
+          sudo install -m 0755 /tmp/lefthook /usr/local/bin/lefthook
+          tmp="$(mktemp -d)"
+          git -C "$tmp" init -q
+          cp lefthook/base.yml "$tmp/lefthook.yml"
+          ( cd "$tmp" && lefthook validate )
+
+  actionlint:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+    steps:
+      - uses: actions/checkout@v5
+      - name: install + run actionlint
+        # Validates Actions workflow + expression syntax across this repo's
+        # reusable workflows. shellcheck-of-run-blocks is disabled for now (the
+        # kustomize render loop is intentionally terse); see issue #4 to enable.
+        run: |
+          curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | tar xz actionlint
+          ./actionlint -shellcheck= -color
