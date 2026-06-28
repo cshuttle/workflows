@@ -8,7 +8,7 @@
 #
 #   jobs:
 #     kustomize:
-#       uses: cshuttle/k8s/.github/workflows/kustomize-validate.yml@main
+#       uses: cshuttle/workflows/.github/workflows/kustomize-validate.yml@main
 #
 # The content repos are self-contained (their cross-repo references are ArgoCD
 # `repoURL` data, not kustomize remote bases), so a plain self-checkout renders
@@ -54,30 +54,8 @@ jobs:
           sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
 
       - name: build + validate all kustomization roots
+        # Same script the Lefthook pre-push hook runs locally — single source of
+        # truth (scripts/kustomize-validate.sh in this repo).
         run: |
-          set -uo pipefail
-          built=0; skipped=0; failed=0; fails=""
-          while IFS= read -r kf; do
-            d="${kf%/kustomization.yaml}"
-            if out="$(kustomize build --enable-helm "$d" 2>/tmp/err)"; then
-              # Schema-validate; -ignore-missing-schemas tolerates the CRD-heavy
-              # output (cilium, cert-manager, eso, awx-operator, cnpg, ...).
-              if printf '%s' "$out" | kubeconform -strict -summary -ignore-missing-schemas >/dev/null 2>/tmp/kc; then
-                built=$((built+1))
-              else
-                failed=$((failed+1)); fails="${fails}  SCHEMA  $d\n$(sed 's/^/          /' /tmp/kc)\n"
-              fi
-            elif compgen -G "$d/*.sops.yaml" >/dev/null || compgen -G "$d/*.age" >/dev/null; then
-              # References a SOPS/AGE-encrypted resource; can't render without the
-              # key — expected, not a failure.
-              skipped=$((skipped+1)); echo "  SKIP (sops)  $d"
-            else
-              failed=$((failed+1)); fails="${fails}  BUILD   $d\n$(sed 's/^/          /' /tmp/err)\n"
-            fi
-          done < <(find ${{ inputs.paths }} -name kustomization.yaml | sort)
-
-          echo "----------------------------------------"
-          echo "built=$built  skipped=$skipped  failed=$failed"
-          if [ "$failed" -gt 0 ]; then
-            echo "----- failures -----"; printf "%b" "$fails"; exit 1
-          fi
+          curl -sSfL https://raw.githubusercontent.com/cshuttle/workflows/main/scripts/kustomize-validate.sh -o /tmp/kustomize-validate.sh
+          bash /tmp/kustomize-validate.sh ${{ inputs.paths }}
