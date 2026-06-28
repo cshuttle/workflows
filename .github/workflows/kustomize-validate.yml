@@ -15,6 +15,11 @@
 # them — no submodules or PAT required, unlike the umbrella's submodule-smoke.
 name: kustomize-validate
 
+# Least privilege: the validation only reads the checkout and fetches public
+# tooling — it never needs write access to the caller repo or its secrets.
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:
