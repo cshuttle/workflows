@@ -18,7 +18,9 @@ pre-commit:
       glob: "*.{yml,yaml}"
       # SOPS-encrypted / Helm-templated files aren't plain YAML
       exclude: '\.(age|sops\.ya?ml)$|/templates/'
-      run: yamllint -d relaxed {staged_files}
+      # relaxed + line-length off: keep real errors (syntax, dup keys) but drop
+      # the noisy "line too long" warnings (helm values, URLs, long comments).
+      run: yamllint -d "{extends: relaxed, rules: {line-length: disable}}" {staged_files}
     whitespace-conflicts:
       # built-in: flags conflict markers + trailing whitespace, no extra tool
       run: git diff --cached --check
