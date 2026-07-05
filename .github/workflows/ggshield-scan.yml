@@ -1,0 +1,51 @@
+# Reusable GitGuardian (ggshield) secret scan.
+#
+# Runs `ggshield secret scan ci` over the caller's pushed/PR commit range so a
+# leaked credential is caught *before* it merges — the pre-merge twin of the
+# GitGuardian GitHub App, which only flags secrets retroactively after a push.
+# Findings also land in the shared GitGuardian dashboard (policy + false-positive
+# management live there — e.g. bws UUIDs are resolved as FPs in the dashboard,
+# not ignored in code).
+#
+# Callers (one per repo) need the org Actions secret GITGUARDIAN_API_KEY and:
+#
+#   jobs:
+#     ggshield:
+#       uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@main
+#       secrets: inherit
+#
+# `secrets: inherit` passes the org-level GITGUARDIAN_API_KEY through without
+# re-declaring it per caller.
+name: ggshield-scan
+
+# Least privilege: the scan only reads the checkout + calls the GitGuardian API.
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    secrets:
+      GITGUARDIAN_API_KEY:
+        description: GitGuardian API key (scope `scan`); source of truth in bws Infrastructure.
+        required: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # ggshield diffs the commit range; it needs full history, not a shallow
+          # clone, to resolve the base of a push or PR.
+          fetch-depth: 0
+
+      - name: ggshield secret scan
+        uses: GitGuardian/ggshield-action@v1
+        env:
+          # ggshield-action reads these to compute the exact push/PR commit range
+          # to scan (see GitGuardian's GitHub Actions docs).
+          GITHUB_PUSH_BEFORE_SHA: ${{ github.event.before }}
+          GITHUB_PUSH_BASE_SHA: ${{ github.event.base }}
+          GITHUB_PULL_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}

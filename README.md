@@ -31,12 +31,36 @@ jobs:
 
 Optional input `paths` (space-separated roots to scan; default `.`).
 
+### `ggshield-scan.yml`
+
+Runs a GitGuardian [`ggshield`](https://github.com/GitGuardian/ggshield) secret
+scan over the caller's pushed/PR commit range — a **pre-merge** gate, unlike the
+GitGuardian GitHub App which only flags leaks retroactively. Findings also appear
+in the shared GitGuardian dashboard (where policy and false-positives — e.g. bws
+UUIDs — are managed; don't obfuscate them in code).
+
+```yaml
+# .github/workflows/ggshield.yml in any repo
+name: ggshield
+on:
+  push:
+  pull_request:
+jobs:
+  ggshield:
+    uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@main
+    secrets: inherit
+```
+
+Requires the org Actions secret **`GITGUARDIAN_API_KEY`** (scope `scan`; source
+of truth in bws Infrastructure). `secrets: inherit` passes it through — no
+per-repo secret needed.
+
 ## Git hooks
 
 ### `lefthook/base.yml`
 
-Shared advisory pre-commit hooks (shellcheck, gitleaks, yamllint, whitespace /
-merge-conflict). Consume from any repo with a tiny `lefthook.yml`:
+Shared advisory pre-commit hooks (shellcheck, gitleaks, ggshield, yamllint,
+whitespace / merge-conflict). Consume from any repo with a tiny `lefthook.yml`:
 
 ```yaml
 remotes:
@@ -47,4 +71,6 @@ remotes:
 ```
 
 Then `lefthook install` per clone. Tools expected on PATH: `lefthook`,
-`shellcheck`, `gitleaks`, `yamllint`.
+`shellcheck`, `gitleaks`, `ggshield`, `yamllint`. `ggshield` also needs a
+GitGuardian token (`ggshield auth login` or `GITGUARDIAN_API_KEY`); without one
+its hook self-skips (advisory) — `gitleaks` still runs offline.
