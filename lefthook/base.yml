@@ -5,8 +5,10 @@
 # CI (server-side branch protection isn't available on the Free GitHub plan).
 #
 # Per clone:  lefthook install   (re-run after a pre-push change to wire the hook)
-# Tools on PATH: shellcheck, gitleaks, yamllint (pre-commit);
+# Tools on PATH: shellcheck, gitleaks, yamllint, ggshield (pre-commit);
 #                kustomize, helm, kubeconform (pre-push, GitOps repos only).
+# ggshield additionally needs a GitGuardian token — `ggshield auth login` or
+# GITGUARDIAN_API_KEY in env; without it the ggshield hook self-skips (advisory).
 pre-commit:
   parallel: true
   commands:
@@ -15,6 +17,16 @@ pre-commit:
       run: shellcheck {staged_files}
     gitleaks:
       run: gitleaks protect --staged --redact --no-banner
+    ggshield:
+      # GitGuardian secret scan of the staged changes — the local twin of the
+      # ggshield-scan CI gate, backed by the same dashboard/policy. Advisory: if
+      # ggshield isn't installed or has no token it self-skips (never wedges a
+      # dev who hasn't set up auth); gitleaks above is the always-offline net and
+      # CI is the hard gate. Auth: `ggshield auth login` or GITGUARDIAN_API_KEY.
+      run: |
+        command -v ggshield >/dev/null 2>&1 || { echo "ggshield not installed — skip"; exit 0; }
+        ggshield api-status >/dev/null 2>&1 || { echo "ggshield not authenticated — skip"; exit 0; }
+        ggshield secret scan pre-commit
     yaml-lint:
       glob: "*.{yml,yaml}"
       # SOPS-encrypted / Helm-templated files aren't plain YAML
