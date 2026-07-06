@@ -29,8 +29,15 @@ pre-commit:
         ggshield secret scan pre-commit
     yaml-lint:
       glob: "*.{yml,yaml}"
-      # SOPS-encrypted / Helm-templated files aren't plain YAML
-      exclude: '\.(age|sops\.ya?ml)$|/templates/'
+      # SOPS-encrypted / Helm-templated files aren't plain YAML.
+      # Lefthook v2 excludes are GLOBS (gobwas), not regex — the old regex
+      # string silently matched nothing, so yamllint choked on vendored charts.
+      exclude:
+        - "**.age"
+        - "**.sops.yml"
+        - "**.sops.yaml"
+        - "**/templates/**"
+        - "templates/**"
       # relaxed + line-length off: keep real errors (syntax, dup keys) but drop
       # the noisy "line too long" warnings (helm values, URLs, long comments).
       run: 'yamllint -d "{extends: relaxed, rules: {line-length: disable}}" {staged_files}'
