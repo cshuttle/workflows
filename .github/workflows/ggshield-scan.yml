@@ -33,14 +33,14 @@ jobs:
   scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           # ggshield diffs the commit range; it needs full history, not a shallow
           # clone, to resolve the base of a push or PR.
           fetch-depth: 0
 
       - name: ggshield secret scan
-        uses: GitGuardian/ggshield-action@v1
+        uses: GitGuardian/ggshield-action@da20be06cafe5e8633dc24744efe1efe8d30f06b # v1
         env:
           # ggshield-action reads these to compute the exact push/PR commit range
           # to scan (see GitGuardian's GitHub Actions docs).

@@ -40,9 +40,9 @@ jobs:
       # render with "unknown shorthand flag: 'c' in -c".
       HELM_VERSION: v3.21.1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: azure/setup-helm@v4   # `kustomize build --enable-helm` needs helm on PATH
+      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4   # `kustomize build --enable-helm` needs helm on PATH
         with:
           version: ${{ env.HELM_VERSION }}
 
