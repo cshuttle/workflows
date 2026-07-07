@@ -16,7 +16,7 @@ jobs:
     env:
       LEFTHOOK_VERSION: 2.1.9
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: YAML-parse lefthook/base.yml (independent of lefthook)
         # Catches the unquoted-scalar class that broke every fresh `lefthook
@@ -41,7 +41,7 @@ jobs:
     env:
       ACTIONLINT_VERSION: 1.7.12
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: install + run actionlint
         # Validates Actions workflow + expression syntax across this repo's
         # reusable workflows. shellcheck-of-run-blocks is off (the shared shell
@@ -53,7 +53,7 @@ jobs:
   shellcheck:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: shellcheck shared scripts
         # The scripts here run in every consumer (CI + Lefthook pre-push), so a
         # bug propagates everywhere — lint them at the root. shellcheck ships on
