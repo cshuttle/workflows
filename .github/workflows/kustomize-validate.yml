@@ -42,7 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
 
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4   # `kustomize build --enable-helm` needs helm on PATH
+      - uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5   # `kustomize build --enable-helm` needs helm on PATH
         with:
           version: ${{ env.HELM_VERSION }}
 
