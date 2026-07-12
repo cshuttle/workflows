@@ -24,6 +24,15 @@ permissions:
 
 on:
   workflow_call:
+    inputs:
+      runner:
+        description: >-
+          runs-on target for the scan job. Defaults to the GitHub-hosted
+          ubuntu-latest; repos with a dedicated self-hosted runner (CT520 on
+          pveutil) pass `self-hosted` to keep this off metered minutes.
+        type: string
+        default: ubuntu-latest
+        required: false
     secrets:
       GITGUARDIAN_API_KEY:
         description: GitGuardian API key (scope `scan`); source of truth in bws Infrastructure.
@@ -31,7 +40,7 @@ on:
 
 jobs:
   scan:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
