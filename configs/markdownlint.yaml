@@ -24,5 +24,8 @@ MD025: false
 MD036: false
 MD041: false
 
+# Bare URLs — pervasive and intentional in homelab reference docs.
+MD034: false
+
 # Inline HTML — needed for <details>/<summary> collapsibles in READMEs.
 MD033: false
