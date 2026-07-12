@@ -74,3 +74,19 @@ Then `lefthook install` per clone. Tools expected on PATH: `lefthook`,
 `shellcheck`, `gitleaks`, `ggshield`, `yamllint`. `ggshield` also needs a
 GitGuardian token (`ggshield auth login` or `GITGUARDIAN_API_KEY`); without one
 its hook self-skips (advisory) — `gitleaks` still runs offline.
+
+## Standards
+
+### `STANDARDS.md`
+
+The canonical engineering standards for the estate — change flow, lint/format
+(Trunk is normative), commit/PR conventions, secrets rules, ADR practice, docs
+conventions, and the per-repo `AGENTS.md` contract. Every repo's root
+`AGENTS.md` links here and carries only repo-specific deltas.
+
+### `configs/markdownlint.yaml`
+
+Shared pragmatic markdownlint profile (defaults on; noisy prose/structural
+rules off). Copy into a repo as `.trunk/configs/.markdownlint.yaml` and remove
+`markdownlint` from `lint.disabled` in `.trunk/trunk.yaml`. Strict adoption is
+tracked in #7.

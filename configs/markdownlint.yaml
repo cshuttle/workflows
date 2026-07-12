@@ -1,0 +1,28 @@
+# Shared pragmatic markdownlint profile for the cshuttle/* estate.
+# Copy into a repo as .trunk/configs/.markdownlint.yaml and remove
+# markdownlint from `lint.disabled` in .trunk/trunk.yaml.
+#
+# Defaults ON; only the noisy prose/structural rules are relaxed.
+# Full strict adoption (re-enabling the structural rules and restructuring
+# the docs they flag) is tracked in cshuttle/workflows#7.
+
+default: true
+
+# Line length — homelab docs favour long tables, URLs, and command lines;
+# reflow noise outweighs the value.
+MD013: false
+
+# Duplicate headings allowed when not siblings (e.g. "## Gotchas" under
+# several components in one doc).
+MD024:
+  siblings_only: true
+
+# Single-H1 / first-line-heading / emphasis-as-heading — structural rules
+# deferred to strict adoption (workflows#7): many existing docs use
+# frontmatter titles or bold lead-ins that these flag.
+MD025: false
+MD036: false
+MD041: false
+
+# Inline HTML — needed for <details>/<summary> collapsibles in READMEs.
+MD033: false
