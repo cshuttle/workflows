@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   lefthook-config:
-    runs-on: ubuntu-latest
+    runs-on: arc-workflows
     env:
       LEFTHOOK_VERSION: 2.1.9
     steps:
@@ -20,8 +20,10 @@ jobs:
 
       - name: YAML-parse lefthook/base.yml (independent of lefthook)
         # Catches the unquoted-scalar class that broke every fresh `lefthook
-        # install`. Ruby ships on the runner — no pip/PyYAML dependency.
+        # install`. Ruby gives a YAML parser without pip/PyYAML; the minimal
+        # ARC runner image doesn't ship it, so install it first.
         run: |
+          sudo apt-get update -q && sudo apt-get install -y -q ruby
           ruby -ryaml -e "YAML.safe_load(File.read('lefthook/base.yml')); puts 'base.yml is valid YAML'"
 
       - name: lefthook validate
@@ -37,7 +39,7 @@ jobs:
           ( cd "$tmp" && lefthook validate )
 
   actionlint:
-    runs-on: ubuntu-latest
+    runs-on: arc-workflows
     env:
       ACTIONLINT_VERSION: 1.7.12
     steps:
@@ -51,11 +53,13 @@ jobs:
           ./actionlint -shellcheck= -color
 
   shellcheck:
-    runs-on: ubuntu-latest
+    runs-on: arc-workflows
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - name: shellcheck shared scripts
         # The scripts here run in every consumer (CI + Lefthook pre-push), so a
-        # bug propagates everywhere — lint them at the root. shellcheck ships on
-        # the runner.
-        run: shellcheck scripts/*.sh
+        # bug propagates everywhere — lint them at the root. The minimal ARC
+        # runner image doesn't ship shellcheck; install it first.
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          shellcheck scripts/*.sh
