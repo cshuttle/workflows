@@ -9,6 +9,8 @@
 #   jobs:
 #     kustomize:
 #       uses: cshuttle/workflows/.github/workflows/kustomize-validate.yml@main
+#       with:
+#         runner: arc-<repo>   # the repo's ARC runner scale set (see cshuttle/management)
 #
 # The content repos are self-contained (their cross-repo references are ArgoCD
 # `repoURL` data, not kustomize remote bases), so a plain self-checkout renders
@@ -27,10 +29,18 @@ on:
         description: Space-separated roots to scan for kustomization.yaml
         type: string
         default: "."
+      runner:
+        description: >-
+          runs-on target for the validate job. Defaults to the GitHub-hosted
+          ubuntu-latest; repos pass their ARC runner scale set (`arc-<repo>`,
+          on the main k8s cluster) to keep this off metered minutes.
+        type: string
+        default: ubuntu-latest
+        required: false
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     env:
       KUSTOMIZE_VERSION: v5.7.0
       KUBECONFORM_VERSION: v0.6.7
