@@ -1,0 +1,7 @@
+# actionlint config. Declares the repo's self-hosted runner label so the
+# actionlint/runner-label check doesn't flag `runs-on: arc-workflows` as unknown.
+# arc-workflows is this repo's ARC (actions-runner-controller) runner scale set on
+# the main k8s cluster — see cshuttle/management apps/argocd/controller/arc-runners-appset.yaml.
+self-hosted-runner:
+  labels:
+    - arc-workflows
