@@ -10,6 +10,14 @@
 # can't run it. Real build/schema failures exit 1.
 set -uo pipefail
 
+# Git hooks export an ABSOLUTE GIT_DIR (worktrees especially) that leaks into
+# kustomize's nested git commands when it clones remote resources — its
+# `git remote add origin` then targets the OUTER repo and fails with
+# "remote origin already exists". Scrub the hook env so nested git resolves
+# relative to kustomize's own temp clones. (Found 2026-07-16: pre-push from a
+# git worktree broke on the only overlays with remote git bases.)
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_PREFIX
+
 paths=("$@")
 [ "${#paths[@]}" -eq 0 ] && paths=(".")
 
