@@ -55,6 +55,39 @@ Requires the org Actions secret **`GITGUARDIAN_API_KEY`** (scope `scan`; source
 of truth in bws Infrastructure). `secrets: inherit` passes it through — no
 per-repo secret needed.
 
+### `komodo-deploy.yml`
+
+Triggers a Komodo stack deploy from CI — for **self-building stacks** (repos
+whose CI builds the ghcr image the stack runs). Git-push webhooks race the
+async image build and the `auto_update` digest poll lags by minutes; this
+workflow fires *after* the image push succeeds, POSTing a push-shaped,
+HMAC-signed payload to the stack's existing Komodo deploy listener. No Komodo
+API key involved — it uses the same shared webhook secret a GitHub push hook
+would.
+
+```yaml
+# final job in the repo's build workflow
+deploy:
+  needs: build            # gate on the image push having succeeded
+  if: github.ref == 'refs/heads/main'
+  uses: cshuttle/workflows/.github/workflows/komodo-deploy.yml@main
+  with:
+    stack-id: <24-hex komodo stack id>
+    listener-base: https://<komodo webhook listener host>
+    runner: arc-<repo>
+  secrets:
+    KOMODO_WEBHOOK_SECRET: ${{ secrets.KOMODO_WEBHOOK_SECRET }}
+```
+
+Requires the org Actions secret **`KOMODO_WEBHOOK_SECRET`** (Komodo Core's
+shared webhook HMAC secret; source of truth in bws "Komodo GitHub Webhook
+Secret") granted to the caller repo. `listener-base` is required by design —
+this repo is public and carries no estate hostnames. Fire-and-forget: the
+listener 200s and processes async, so keep the stack's `auto_update = true`
+as the backstop. Background: cshuttle/Topology#23 (this fallback) and
+cshuttle/Komodo#120 (the estate-wide `registry_package` router it stands in
+for).
+
 ## Git hooks
 
 ### `lefthook/base.yml`
