@@ -88,6 +88,62 @@ as the backstop. Background: cshuttle/Topology#23 (this fallback) and
 cshuttle/Komodo#120 (the estate-wide `registry_package` router it stands in
 for).
 
+### `mirror-image.yml`
+
+Copies an upstream container tag into a ghcr.io repo you control, so CI pulls
+from a well-peered registry instead of a badly-peered one.
+
+Registry throughput varies enormously by peering, and a badly peered one is not
+merely slow — it fails. Measured from one homelab site against the same 926MB
+image: **ghcr.io 192 MB/s, docker.io 86, quay.io 79, registry.k8s.io 20,
+mcr.microsoft.com 2.2**. That one registry was 391s of a ~640s CI job, and its
+sibling CDN blew a 30s client timeout under load and failed builds outright.
+Mirroring took the job to ~80s.
+
+```yaml
+# .github/workflows/mirror-<image>.yml in the consuming repo
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"        # weekly re-sync; a no-op unless upstream moved
+jobs:
+  mirror:
+    uses: cshuttle/workflows/.github/workflows/mirror-image.yml@main
+    permissions:
+      contents: read
+      packages: write
+    with:
+      source: mcr.microsoft.com/playwright
+      destination: ghcr.io/${{ github.repository_owner }}/playwright
+      tag: v1.61.1-noble
+      runner: arc-<repo>
+```
+
+**Measure before adopting it.** A mirror only helps if the pull is genuinely the
+bottleneck — compare the pull's *download* phase against its *extract* phase
+first (docker logs both; extraction was 8s of that 400s). Raising runner
+concurrency against a starved path makes things worse, not better.
+
+Notes:
+
+- **Skips the copy when the mirror is already current**, comparing *layer*
+  digests. The push adds an OCI source label, so the mirror's manifest and
+  config digests never equal upstream's even when content is identical — a
+  manifest comparison would re-copy on every run.
+- **Stages to disk rather than `crane copy`.** A streamed copy holds the upload
+  open for the whole download, and against a slow source the destination
+  cancels it (`stream ID 5; CANCEL; received from peer`).
+- Defaults to `linux/amd64`; `crane` defaults to `all`, and mirroring an unused
+  architecture doubles the bytes over exactly the leg being avoided.
+- Destination must be **ghcr.io** — the push uses the caller's `GITHUB_TOKEN`.
+  The pushed package is private and linked to the calling repo; making it
+  **public** is simpler for a mirror of an already-public image and removes the
+  need for `credentials:` on the consumer's `container:`.
+- The consumer must keep its own pin (image tag, and any client library
+  version that must match it) in step — this workflow mirrors, it does not
+  reconcile. See `cshuttle/nmon` `.github/workflows/lockstep.yml` for one way
+  to enforce that.
+
 ## Git hooks
 
 ### `lefthook/base.yml`

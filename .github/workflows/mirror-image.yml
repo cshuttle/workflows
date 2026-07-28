@@ -1,0 +1,157 @@
+# Reusable container-image mirror: copy an upstream tag into a registry you
+# control, and pull from there instead.
+#
+# WHY THIS EXISTS. Registry throughput varies enormously by peering, and a badly
+# peered one is not merely slow — it fails. Measured from one homelab site
+# against the same 926MB image: ghcr.io 192 MB/s, docker.io 86, quay.io 79,
+# registry.k8s.io 20, and mcr.microsoft.com 2.2 MB/s. That single registry was
+# 391s of a ~640s CI job, and its sibling CDN exceeded a 30s client timeout
+# under load and failed builds outright. Mirroring took the job to ~80s.
+#
+# Before reaching for this, measure. The fix for a slow job is only a mirror if
+# the bottleneck is actually the pull — check the pull's DOWNLOAD phase against
+# its EXTRACT phase first (docker logs both, and extraction was 8s of that 400s).
+#
+#   jobs:
+#     mirror:
+#       uses: cshuttle/workflows/.github/workflows/mirror-image.yml@main
+#       permissions:
+#         contents: read
+#         packages: write
+#       with:
+#         source: mcr.microsoft.com/playwright
+#         destination: ghcr.io/${{ github.repository_owner }}/playwright
+#         tag: v1.61.1-noble
+#         runner: arc-<repo>
+#
+# The destination must be ghcr.io: the push authenticates with the caller's
+# GITHUB_TOKEN. Mirroring elsewhere needs a registry credential this workflow
+# deliberately does not take.
+name: mirror-image
+
+# Least privilege: read the caller's checkout (not actually needed, but the
+# default token scope is clearer stated) and write packages for the push.
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_call:
+    inputs:
+      source:
+        description: Upstream image WITHOUT a tag, e.g. mcr.microsoft.com/playwright
+        type: string
+        required: true
+      destination:
+        description: Target image WITHOUT a tag. Must be on ghcr.io.
+        type: string
+        required: true
+      tag:
+        description: The tag to mirror. The same tag is used on both sides.
+        type: string
+        required: true
+      platform:
+        description: >-
+          Platform to copy. crane defaults to `all`, and mirroring an unused
+          architecture doubles the bytes over the slow leg — which is the leg
+          this workflow exists to avoid.
+        type: string
+        default: linux/amd64
+        required: false
+      runner:
+        description: >-
+          runs-on target. Defaults to the GitHub-hosted ubuntu-latest; repos
+          pass their ARC runner scale set (`arc-<repo>`) to keep this off
+          metered minutes.
+        type: string
+        default: ubuntu-latest
+        required: false
+      crane-version:
+        description: go-containerregistry release to use.
+        type: string
+        default: v0.21.7
+        required: false
+    outputs:
+      digest:
+        description: Digest of the mirrored image (empty when nothing was copied).
+        value: ${{ jobs.mirror.outputs.digest }}
+      copied:
+        description: "true if a copy happened, false if the mirror was already current."
+        value: ${{ jobs.mirror.outputs.copied }}
+
+jobs:
+  mirror:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+      copied: ${{ steps.check.outputs.stale }}
+    steps:
+      - name: install crane
+        run: |
+          curl -sSL "https://github.com/google/go-containerregistry/releases/download/${{ inputs.crane-version }}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /tmp crane
+          /tmp/crane version
+
+      - name: log in to ghcr
+        run: echo "${{ github.token }}" | /tmp/crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # Skip the expensive leg when the mirror is already current. Compares
+      # LAYER digests, not the manifest digest: the push below adds an OCI
+      # source label, so the mirror's manifest and config digests never equal
+      # upstream's even when the content is identical. A manifest comparison
+      # would report drift on every run and re-copy forever.
+      - name: is the mirror already current?
+        id: check
+        run: |
+          SRC="${{ inputs.source }}:${{ inputs.tag }}"
+          DST="${{ inputs.destination }}:${{ inputs.tag }}"
+          # sed/grep/tr only — no python or jq, neither of which is guaranteed
+          # on a bare self-hosted runner image. Empty input yields an empty
+          # string rather than an error, which is the NORMAL first-run case
+          # (destination tag absent) and must not look like a failure.
+          #
+          # `tr -d '\n'` FIRST is load-bearing: crane pretty-prints the
+          # manifest, so a line-based `sed` would only strip on the line holding
+          # "layers" and the CONFIG digest above it would survive — silently
+          # comparing the wrong thing and re-copying on every run.
+          layers() { tr -d '\n' | sed 's/.*"layers"//' | grep -o 'sha256:[a-f0-9]\{64\}' | tr '\n' ','; }
+          up=$(/tmp/crane manifest --platform "${{ inputs.platform }}" "$SRC" 2>/dev/null | layers)
+          mine=$(/tmp/crane manifest "$DST" 2>/dev/null | layers)
+          if [ -z "$up" ]; then
+            echo "could not read $SRC — refusing to guess whether the mirror is current"; exit 1
+          fi
+          if [ "$up" = "$mine" ]; then
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+            echo "mirror is current — $(echo "$up" | tr ',' '\n' | wc -l) identical layers, nothing to copy"
+          else
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+            echo "mirror differs from upstream (or is absent) — copying"
+          fi
+
+      # STAGE TO DISK, then push — not `crane copy`. copy streams
+      # source->destination, so the upload is held open for the whole download.
+      # Against a slow source that is minutes, and the destination cancels the
+      # stalled upload (`stream ID 5; CANCEL; received from peer`). Pulling to a
+      # tarball first decouples the two legs entirely.
+      - name: pull from source
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          time /tmp/crane pull --platform "${{ inputs.platform }}" \
+            "${{ inputs.source }}:${{ inputs.tag }}" /tmp/mirror.tar
+          ls -lh /tmp/mirror.tar
+
+      - name: push to destination
+        id: push
+        if: steps.check.outputs.stale == 'true'
+        run: |
+          DST="${{ inputs.destination }}:${{ inputs.tag }}"
+          time /tmp/crane push /tmp/mirror.tar "$DST"
+          # Links the ghcr package to the calling repo, which is what lets that
+          # repo's own GITHUB_TOKEN pull it while the package stays private.
+          # (A public package needs no credentials at all — simpler, and worth
+          # preferring for a mirror of an already-public image.)
+          /tmp/crane mutate "$DST" -t "$DST" \
+            --label org.opencontainers.image.source=https://github.com/${{ github.repository }} \
+            --label org.opencontainers.image.description="Mirror of ${{ inputs.source }} (${{ inputs.platform }})"
+          echo "digest=$(/tmp/crane digest "$DST")" >> "$GITHUB_OUTPUT"
+          /tmp/crane digest "$DST"
