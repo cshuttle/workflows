@@ -122,7 +122,9 @@ jobs:
           fi
           if [ "$up" = "$mine" ]; then
             echo "stale=false" >> "$GITHUB_OUTPUT"
-            echo "mirror is current — $(echo "$up" | tr ',' '\n' | wc -l) identical layers, nothing to copy"
+            # grep -c . not wc -l: layers() leaves a trailing comma, so wc counts a
+            # phantom empty line and reports one more layer than the image has.
+            echo "mirror is current — $(echo "$up" | tr ',' '\n' | grep -c .) identical layers, nothing to copy"
           else
             echo "stale=true" >> "$GITHUB_OUTPUT"
             echo "mirror differs from upstream (or is absent) — copying"
