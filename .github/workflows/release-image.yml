@@ -1,0 +1,287 @@
+# Reusable release for a repo whose artifact is one or more container images.
+#
+# WHAT A RELEASE IS HERE. Not a build. The image was already built and tested
+# when the commit merged; this workflow PROMOTES that existing digest to a
+# version tag, then records it as a git tag + GitHub Release. Rebuilding on the
+# tag would produce a second digest from the same source — a different artifact
+# to the one CI actually tested, and double the build minutes for the privilege
+# (cshuttle/workflows#28).
+#
+# Callers wire a dispatch button, because the version is a HUMAN decision: a
+# major here means "the deploy needs a human step", which no commit message can
+# be trusted to encode (cshuttle/workflows#26, #30).
+#
+#   # .github/workflows/release.yml in the app repo
+#   name: release
+#   on:
+#     workflow_dispatch:
+#       inputs:
+#         version:
+#           description: "Version to release, e.g. v1.2.0"
+#           required: true
+#         summary:
+#           description: "Optional paragraph shown above the generated notes"
+#           required: false
+#   jobs:
+#     release:
+#       uses: cshuttle/workflows/.github/workflows/release-image.yml@v1.0.0
+#       permissions:
+#         contents: write   # push the tag, create the release
+#         packages: write   # add the version tag to the ghcr package
+#       with:
+#         version: ${{ inputs.version }}
+#         summary: ${{ inputs.summary }}
+#         images: ghcr.io/cshuttle/topology
+#         runner: arc-topology
+#
+# NOT covered: repos whose artifact is a compiled binary rather than an image.
+# There is exactly one of those (chrome-exporter) and its build is nothing like
+# this one, so it stays in-repo until a second binary makes the duplication real
+# (cshuttle/workflows#31). The version SCHEME is shared regardless.
+name: release-image
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: >-
+          The version to release, e.g. `v1.2.0`. Validated as `vMAJOR.MINOR.PATCH`
+          with an optional prerelease suffix. Rejected if the tag already exists —
+          released tags are immutable and are never moved (see this repo's README).
+        type: string
+        required: true
+      images:
+        description: >-
+          Images to promote, WITHOUT a tag, whitespace- or newline-separated.
+          Multiple images version together: `ghcr.io/cshuttle/atlas` and its
+          sidecar are one release, not two.
+        type: string
+        required: true
+      summary:
+        description: >-
+          Optional paragraph rendered ABOVE the generated notes. Leave empty for
+          routine releases — notes must never be the thing blocking a release.
+        type: string
+        default: ""
+        required: false
+      runner:
+        description: >-
+          runs-on target. Repos pass their ARC scale set (`arc-<repo>`);
+          GitHub-hosted runners are disabled estate-wide, so the default here is
+          a deliberate footgun-avoider rather than a useful value.
+        type: string
+        default: ubuntu-latest
+        required: false
+      tag-prefix:
+        description: >-
+          Prefix for the GIT tag only, e.g. `chrome-exporter/` for a component
+          released from inside a larger repo. Never applied to the IMAGE tag —
+          `/` is not legal in a docker tag, and the image is already namespaced
+          by its own repository path.
+        type: string
+        default: ""
+        required: false
+      source-tag:
+        description: The mutable tag whose digest is being promoted.
+        type: string
+        default: latest
+        required: false
+      verify-source-commit:
+        description: >-
+          Refuse to release unless the source tag's digest is ALSO reachable
+          under a commit-sha tag for the ref this workflow is running on. This is
+          the guard against releasing whatever happened to be `:latest` — a build
+          still running, or one that failed after the merge. Set false only for a
+          repo that does not publish per-commit tags.
+        type: boolean
+        default: true
+        required: false
+      crane-version:
+        description: go-containerregistry release to use.
+        type: string
+        default: v0.21.7
+        required: false
+    outputs:
+      tag:
+        description: The git tag created.
+        value: ${{ jobs.release.outputs.tag }}
+      digest:
+        description: Digest of the first promoted image.
+        value: ${{ jobs.release.outputs.digest }}
+
+# One release at a time per repo. Two concurrent runs would race on the same tag
+# and the loser would fail halfway, after promoting images but before tagging.
+concurrency:
+  group: release-image-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      tag: ${{ steps.plan.outputs.git_tag }}
+      digest: ${{ steps.promote.outputs.digest }}
+    steps:
+      - name: validate the version
+        id: plan
+        env:
+          VERSION: ${{ inputs.version }}
+          PREFIX: ${{ inputs.tag-prefix }}
+        run: |
+          set -eu
+          # Reject early and loudly. The alternative is a bad tag reaching the
+          # remote, where it cannot be fixed by moving it — only by superseding.
+          if ! printf '%s' "$VERSION" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+            echo "::error::version must look like v1.2.3 (optionally v1.2.3-rc.1) — got '$VERSION'"
+            exit 1
+          fi
+          echo "git_tag=${PREFIX}${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "releasing ${PREFIX}${VERSION}"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # Tags are needed to answer "does this one already exist?" locally,
+          # and the annotated tag is created from this checkout.
+          fetch-depth: 0
+
+      - name: refuse to reuse a tag
+        env:
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+        run: |
+          set -eu
+          # Checked against the REMOTE, not just the local checkout: a tag pushed
+          # from elsewhere since this clone was made is still a tag that exists.
+          if git ls-remote --exit-code --tags origin "refs/tags/$GIT_TAG" >/dev/null 2>&1; then
+            echo "::error::tag $GIT_TAG already exists — released tags are immutable."
+            echo "::error::Supersede it with a new patch version instead of moving it."
+            exit 1
+          fi
+
+      - name: install crane
+        run: |
+          set -eu
+          curl -sSL "https://github.com/google/go-containerregistry/releases/download/${{ inputs.crane-version }}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C /tmp crane
+          /tmp/crane version
+
+      - name: log in to ghcr
+        run: echo "${{ github.token }}" | /tmp/crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      # The heart of it: prove the thing being released is the thing CI built for
+      # THIS commit, then move the version tag onto that exact digest.
+      - name: promote the tested digest
+        id: promote
+        env:
+          IMAGES: ${{ inputs.images }}
+          SOURCE_TAG: ${{ inputs.source-tag }}
+          IMAGE_TAG: ${{ steps.plan.outputs.image_tag }}
+          VERIFY: ${{ inputs.verify-source-commit }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          short="$(printf '%s' "$SHA" | cut -c1-7)"
+          first_digest=""
+          # Collected in a file, not a shell string: appending indented
+          # here-lines would carry their leading whitespace into the release
+          # body, where markdown reads 4+ spaces as a code block.
+          : > /tmp/released-images.md
+
+          for img in $IMAGES; do
+            echo "── $img"
+            if ! digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>/dev/null)"; then
+              echo "::error::$img:$SOURCE_TAG does not exist — nothing to promote."
+              exit 1
+            fi
+            echo "   $SOURCE_TAG = $digest"
+
+            if [ "$VERIFY" = "true" ]; then
+              # Repos tag per-commit differently — Topology uses the full sha,
+              # Atlas a 7-char short sha, VirtualWindow `sha-<short>`. Try each
+              # rather than making every caller declare its convention.
+              matched=""
+              for cand in "$SHA" "$short" "sha-$short"; do
+                if cd="$(/tmp/crane digest "$img:$cand" 2>/dev/null)" && [ "$cd" = "$digest" ]; then
+                  matched="$cand"
+                  break
+                fi
+              done
+              if [ -z "$matched" ]; then
+                echo "::error::$img:$SOURCE_TAG is not the image built from $SHA."
+                echo "::error::Tried tags: $SHA, $short, sha-$short."
+                echo "::error::The build for this commit may still be running, or may have failed."
+                echo "::error::Releasing now would ship a different commit than the one you are on."
+                exit 1
+              fi
+              echo "   verified: also tagged $matched — this is the build of $short"
+            fi
+
+            # Tag BY DIGEST, not by re-resolving :latest. Between the check above
+            # and this line a new build could land; promoting the ref we already
+            # verified closes that window.
+            /tmp/crane tag "$img@$digest" "$IMAGE_TAG"
+            echo "   tagged $IMAGE_TAG"
+
+            [ -n "$first_digest" ] || first_digest="$digest"
+            printf -- '- `%s:%s` — `%s`\n' "$img" "$IMAGE_TAG" "$digest" >> /tmp/released-images.md
+          done
+
+          echo "digest=$first_digest" >> "$GITHUB_OUTPUT"
+          {
+            echo 'images<<RELEASE_IMAGES_EOF'
+            cat /tmp/released-images.md
+            echo 'RELEASE_IMAGES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: create the annotated tag
+        env:
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+        run: |
+          set -eu
+          # Annotated, not lightweight: `git show <tag>` should answer who cut
+          # this and when without a round trip to the API.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Separate -m flags become separate paragraphs, without dragging YAML
+          # block indentation into the message body.
+          git tag -a "$GIT_TAG" \
+            -m "$GIT_TAG" \
+            -m "Released by ${{ github.actor }} via the release-image workflow. Promoted the image digest built from ${{ github.sha }} — no rebuild."
+          git push origin "$GIT_TAG"
+
+      # github-script rather than curl/gh: `gh` is absent from the bare ARC
+      # runner image, and hand-building JSON for an arbitrary human-written
+      # summary in shell is an escaping bug waiting to happen. Node is always
+      # present — it is what runs JS actions.
+      - name: publish the release
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          SUMMARY: ${{ inputs.summary }}
+          IMAGE_LINES: ${{ steps.promote.outputs.images }}
+        with:
+          script: |
+            const tag = process.env.GIT_TAG;
+            const summary = (process.env.SUMMARY || '').trim();
+            const images = (process.env.IMAGE_LINES || '').trim();
+
+            // `body` is PRE-pended to the generated notes by the API when
+            // generate_release_notes is true, which is exactly the shape decided
+            // in cshuttle/workflows#30: optional human lead, generated list below.
+            const parts = [];
+            if (summary) parts.push(summary);
+            if (images) parts.push(`### Released images\n\n${images}`);
+
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              name: tag,
+              body: parts.join('\n\n'),
+              generate_release_notes: true,
+            });
+            core.info(`published ${data.html_url}`);
+            await core.summary
+              .addHeading(`Released ${tag}`)
+              .addLink(data.html_url, data.html_url)
+              .write();
