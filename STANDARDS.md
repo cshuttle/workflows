@@ -52,6 +52,30 @@ generic — no hostnames, addresses, or estate topology here.
   be obfuscated: false-positive policy lives in the GitGuardian dashboard,
   and both CI (`ggshield-scan.yml`) and local hooks scan every change.
 
+## Releases and versioning
+
+- **Versions are `vMAJOR.MINOR.PATCH`.** A **major** means a consumer must act:
+  for a library or shared CI definition, that the caller must change something;
+  for a deployed application, that the release cannot go out by the normal
+  automated path alone (migration, new env var or secret, changed route,
+  manifest edit). Minor is a capability someone would notice; patch is the rest.
+- **Released tags are immutable and are never moved**, and no floating major
+  tag is published. Supersede a bad release with a patch. Anything consumed by
+  reference — shared workflows, shared hook configs — is pinned to an exact
+  tag by its consumers, never to a branch.
+- **Build once, promote.** A release re-tags the artifact that CI already built
+  and tested for that commit; it does not rebuild it. Rebuilding on a tag ships
+  a different artifact from the one that was tested.
+- **Deployments track released versions, gated at majors** — automation carries
+  minors and patches, a major waits for a human. Rolling back is a *constraint*
+  change (narrow the allowed range), not a value change: reverting a pinned
+  version alone is undone by the next reconcile.
+- **Cutting a release is a deliberate act with a human-chosen version**, not an
+  inference from commit messages. Release notes are generated, with an optional
+  hand-written summary above them; no changelog file to keep honest.
+- Rationale and the rejected alternatives: `docs/adr/0001-release-and-versioning-model.md`
+  in this repo.
+
 ## Architecture decisions (ADRs)
 
 - Decisions that constrain future work get an ADR: `docs/adr/NNNN-slug.md`

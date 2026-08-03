@@ -174,6 +174,56 @@ Notes:
   reconcile. See `cshuttle/nmon` `.github/workflows/lockstep.yml` for one way
   to enforce that.
 
+### `release-image.yml`
+
+Cuts a release for a repo whose artifact is one or more container images. It
+does **not** build: the image was built and tested when the commit merged, so
+this promotes that existing digest to a version tag, creates an annotated git
+tag, and publishes a GitHub Release.
+
+```yaml
+# .github/workflows/release.yml in the app repo
+name: release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v1.2.0"
+        required: true
+      summary:
+        description: "Optional paragraph shown above the generated notes"
+        required: false
+jobs:
+  release:
+    uses: cshuttle/workflows/.github/workflows/release-image.yml@v1.0.0
+    permissions:
+      contents: write # push the tag, create the release
+      packages: write # add the version tag to the ghcr package
+    with:
+      version: ${{ inputs.version }}
+      summary: ${{ inputs.summary }}
+      images: ghcr.io/cshuttle/topology
+      runner: arc-<repo>
+```
+
+- **Promotes, never rebuilds.** A rebuild on the tag produces a second digest
+  from the same source — a different artifact from the one CI tested, for twice
+  the build minutes. `images` takes several images that version together (an
+  app and its sidecar are one release, not two).
+- **Refuses to release a mismatched build.** Unless `verify-source-commit` is
+  false, the source tag's digest must also be reachable under a commit-sha tag
+  for the running ref, so a build that is still in flight — or that failed after
+  the merge — cannot be released by accident. Repos tag per-commit differently,
+  so `<sha>`, the 7-char short sha and `sha-<short>` are all tried.
+- **Refuses to reuse a tag**, checked against the remote rather than the local
+  clone. Released tags are immutable; supersede with a patch instead.
+- **A dispatch button, because the version is a human decision** — a major means
+  the deploy needs a human step, which no commit message reliably encodes.
+- `tag-prefix` applies to the **git** tag only (`chrome-exporter/v1.0.0`), never
+  the image tag: `/` is not legal in a docker tag.
+- Notes are always GitHub-generated; `summary` is pre-pended when supplied, and
+  the promoted digests are listed under it.
+
 ## Git hooks
 
 ### `lefthook/base.yml`
