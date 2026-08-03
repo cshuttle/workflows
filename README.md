@@ -195,7 +195,7 @@ on:
         required: false
 jobs:
   release:
-    uses: cshuttle/workflows/.github/workflows/release-image.yml@v1.0.0
+    uses: cshuttle/workflows/.github/workflows/release-image.yml@v1.1.0
     permissions:
       contents: write # push the tag, create the release
       packages: write # add the version tag to the ghcr package
