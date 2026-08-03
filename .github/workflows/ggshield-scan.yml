@@ -11,7 +11,7 @@
 #
 #   jobs:
 #     ggshield:
-#       uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@main
+#       uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@v1.0.0
 #       with:
 #         runner: arc-<repo>   # the repo's ARC runner scale set (see cshuttle/management)
 #       secrets: inherit
