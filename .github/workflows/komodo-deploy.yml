@@ -29,7 +29,7 @@
 #   deploy:
 #     needs: build
 #     if: github.ref == 'refs/heads/main'
-#     uses: cshuttle/workflows/.github/workflows/komodo-deploy.yml@main
+#     uses: cshuttle/workflows/.github/workflows/komodo-deploy.yml@v1.0.0
 #     with:
 #       stack-id: <24-hex komodo stack id>  # <stack name>
 #       listener-base: https://<komodo webhook listener host>

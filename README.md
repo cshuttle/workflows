@@ -10,6 +10,36 @@ plan, but a public host is callable by any repo on any plan, and Lefthook
 `remotes:` likewise pull from here. Only generic CI recipes live here; no
 secrets, manifests, or hostnames.
 
+## Versioning — read this before cutting a release
+
+Consumers pin an **exact release tag** (`@v1.0.0`), never `@main` and never a
+floating major. What this repo publishes is consumed by ~30 repos, so a commit
+to the default branch used to change the whole estate's CI the moment it merged
+— no pull request anywhere, no record of which repo ran which version. That is
+the same reason every third-party action here is pinned by SHA.
+
+Three rules follow from that:
+
+1. **Released tags are immutable and are never moved.** A broken workflow is
+   superseded by a new patch release. Moving a tag would silently change every
+   consumer that already pinned it — the exact failure the pins remove.
+2. **There is no floating `v1`.** Convenient, and the GitHub-ecosystem norm, but
+   it re-creates the silent-change problem one level up.
+3. **A major bump means consumers must edit their `uses:` line** — an input
+   removed or renamed, or behaviour a caller has to react to. Minor is a new
+   capability, patch is everything else.
+
+Bumping consumers after a release, by surface:
+
+| Surface | Who moves it |
+| --- | --- |
+| `.github/workflows/ggshield.yml` (~30 repos) | `REUSABLE_REF` in `Monitoring/scripts/reconcile-ggshield-gate.sh`, then a `--sync-workflow` sweep — one PR per repo. Renovate is deliberately disabled on this generated file so the two cannot rubber-band. |
+| The hand-written callers (kustomize-validate, mirror-image, komodo-deploy) | Renovate |
+| Lefthook `remotes:` refs | By hand — Renovate has no manager for them |
+
+The usage examples below pin `v1.0.0`; check the
+[releases](https://github.com/cshuttle/workflows/releases) for the current tag.
+
 ## Available workflows
 
 ### `kustomize-validate.yml`
@@ -26,7 +56,7 @@ on:
   pull_request:
 jobs:
   kustomize:
-    uses: cshuttle/workflows/.github/workflows/kustomize-validate.yml@main
+    uses: cshuttle/workflows/.github/workflows/kustomize-validate.yml@v1.0.0
 ```
 
 Optional input `paths` (space-separated roots to scan; default `.`).
@@ -47,7 +77,7 @@ on:
   pull_request:
 jobs:
   ggshield:
-    uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@main
+    uses: cshuttle/workflows/.github/workflows/ggshield-scan.yml@v1.0.0
     secrets: inherit
 ```
 
@@ -70,7 +100,7 @@ would.
 deploy:
   needs: build            # gate on the image push having succeeded
   if: github.ref == 'refs/heads/main'
-  uses: cshuttle/workflows/.github/workflows/komodo-deploy.yml@main
+  uses: cshuttle/workflows/.github/workflows/komodo-deploy.yml@v1.0.0
   with:
     stack-id: <24-hex komodo stack id>
     listener-base: https://<komodo webhook listener host>
@@ -108,7 +138,7 @@ on:
     - cron: "17 4 * * 1"        # weekly re-sync; a no-op unless upstream moved
 jobs:
   mirror:
-    uses: cshuttle/workflows/.github/workflows/mirror-image.yml@main
+    uses: cshuttle/workflows/.github/workflows/mirror-image.yml@v1.0.0
     permissions:
       contents: read
       packages: write
