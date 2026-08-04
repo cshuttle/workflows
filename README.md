@@ -226,6 +226,13 @@ jobs:
   the image tag: `/` is not legal in a docker tag.
 - Notes are always GitHub-generated; `summary` is pre-pended when supplied, and
   the promoted digests are listed under it.
+- **`require-same-commit: false` for independently-built components.** By default
+  every image must resolve to one build commit, which catches a half-updated
+  pair shipping under one version. That is wrong for a repo whose images come
+  from separate path-filtered workflows — those change independently and almost
+  never share a commit, so the release legitimately means "SPA built at X plus
+  config built at Y". Each image is still verified against the branch's history;
+  the tag lands on the newest resolved commit.
 - **`ghcr-token` when the package is user-owned.** On a personal account a
   package bootstrapped by a manual push is owned by the user, not the repo, and
   `GITHUB_TOKEN` gets 403 on it — including on reads, which the registry reports

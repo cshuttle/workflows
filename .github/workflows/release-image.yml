@@ -101,6 +101,19 @@ on:
         type: boolean
         default: true
         required: false
+      require-same-commit:
+        description: >-
+          Require every image to resolve to ONE build commit. Correct when a
+          single workflow builds them together (an app and its sidecar), where a
+          mismatch means a half-updated pair shipping under one version. WRONG
+          for a repo whose images are built by separate, path-filtered workflows:
+          those components change independently and almost never share a commit,
+          so the release is legitimately "SPA built at X plus config built at Y".
+          Set false there — each image is still verified against this branch's
+          history, and the tag lands on the newest resolved commit.
+        type: boolean
+        default: true
+        required: false
       verify-depth:
         description: >-
           How many commits back to search for the build. Needs to cover the gap
@@ -220,6 +233,7 @@ jobs:
           SOURCE_TAG: ${{ inputs.source-tag }}
           IMAGE_TAG: ${{ steps.plan.outputs.image_tag }}
           VERIFY: ${{ inputs.verify-source-commit }}
+          SAME_COMMIT: ${{ inputs.require-same-commit }}
           DEPTH: ${{ inputs.verify-depth }}
           SHA: ${{ github.sha }}
         run: |
@@ -289,13 +303,23 @@ jobs:
               behind="$(git rev-list --count "$release_commit..$SHA")"
               echo "   verified: built from $release_commit (tag $matched), $behind commit(s) behind the ref"
               if [ -n "$RELEASE_COMMIT" ] && [ "$RELEASE_COMMIT" != "$release_commit" ]; then
-                echo "::error::images disagree about which commit they were built from:"
-                echo "::error::  $RELEASE_COMMIT vs $release_commit ($img)."
-                echo "::error::Images released together must come from one build."
-                exit 1
+                if [ "$SAME_COMMIT" = "true" ]; then
+                  echo "::error::images disagree about which commit they were built from:"
+                  echo "::error::  $RELEASE_COMMIT vs $release_commit ($img)."
+                  echo "::error::Images released together must come from one build."
+                  echo "::error::If these components are built by separate path-filtered"
+                  echo "::error::workflows, they change independently — set require-same-commit: false."
+                  exit 1
+                fi
+                echo "   note: differs from $RELEASE_COMMIT — independent components, allowed"
               fi
-              RELEASE_COMMIT="$release_commit"
-              BEHIND="$behind"
+              # Keep the NEWEST resolved commit: with independent components the
+              # release is "everything up to here", and the oldest would name a
+              # commit that predates code being shipped.
+              if [ -z "$RELEASE_COMMIT" ] || [ "$behind" -lt "$BEHIND" ]; then
+                RELEASE_COMMIT="$release_commit"
+                BEHIND="$behind"
+              fi
             fi
 
             # Tag BY DIGEST, not by re-resolving :latest. Between the check above
