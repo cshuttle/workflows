@@ -342,26 +342,45 @@ jobs:
             echo 'RELEASE_IMAGES_EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # Created through the git-data API, NOT `git push`. A token-authenticated
+      # push is rejected whenever the ref being pushed carries a workflow file
+      # that differs from the default branch's — "refusing to allow a GitHub App
+      # to create or update workflow ... without `workflows` permission` — and
+      # GITHUB_TOKEN cannot hold that scope at all. That happens routinely here:
+      # the tag lands on the commit the image came from, and any later CI change
+      # makes its .github/workflows differ from main. The API creates a tag
+      # object pointing at an existing commit, introducing no file changes, so
+      # the check does not apply.
       - name: create the annotated tag
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
           RELEASE_COMMIT: ${{ steps.promote.outputs.release_commit }}
           BEHIND: ${{ steps.promote.outputs.behind }}
-        run: |
-          set -eu
-          # Annotated, not lightweight: `git show <tag>` should answer who cut
-          # this and when without a round trip to the API.
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Tag the commit the IMAGE came from, not the ref's HEAD. When later
-          # commits changed nothing the build cares about, HEAD never produced an
-          # image — tagging it would name a version after a commit that is not in
-          # it. Usually these are the same commit; when they are not, this is the
-          # honest one.
-          git tag -a "$GIT_TAG" "$RELEASE_COMMIT" \
-            -m "$GIT_TAG" \
-            -m "Released by ${{ github.actor }} via the release-image workflow. Promoted the image digest built from $RELEASE_COMMIT — no rebuild. ($BEHIND commit(s) on ${{ github.ref_name }} after it changed no image inputs.)"
-          git push origin "$GIT_TAG"
+        with:
+          script: |
+            const tag = process.env.GIT_TAG;
+            const sha = process.env.RELEASE_COMMIT;
+            const behind = process.env.BEHIND;
+            // Annotated, not lightweight: `git show <tag>` should answer who cut
+            // this and when without a round trip to the API.
+            const { data: tagObject } = await github.rest.git.createTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag,
+              message: `${tag}\n\nReleased by ${context.actor} via the release-image workflow. `
+                + `Promoted the image digest built from ${sha} — no rebuild. `
+                + `(${behind} commit(s) on ${context.ref.replace('refs/heads/', '')} after it changed no image inputs.)`,
+              object: sha,
+              type: 'commit',
+            });
+            await github.rest.git.createRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `refs/tags/${tag}`,
+              sha: tagObject.sha,
+            });
+            core.info(`tagged ${sha} as ${tag}`);
 
       # github-script rather than curl/gh: `gh` is absent from the bare ARC
       # runner image, and hand-building JSON for an arbitrary human-written
