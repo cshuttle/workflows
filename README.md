@@ -204,6 +204,9 @@ jobs:
       summary: ${{ inputs.summary }}
       images: ghcr.io/cshuttle/topology
       runner: arc-<repo>
+    secrets:
+      # Only for a package GITHUB_TOKEN cannot read — see below. Omit otherwise.
+      ghcr-token: ${{ secrets.GHCR_WRITE_TOKEN }}
 ```
 
 - **Promotes, never rebuilds.** A rebuild on the tag produces a second digest
@@ -223,6 +226,12 @@ jobs:
   the image tag: `/` is not legal in a docker tag.
 - Notes are always GitHub-generated; `summary` is pre-pended when supplied, and
   the promoted digests are listed under it.
+- **`ghcr-token` when the package is user-owned.** On a personal account a
+  package bootstrapped by a manual push is owned by the user, not the repo, and
+  `GITHUB_TOKEN` gets 403 on it — including on reads, which the registry reports
+  as a plain "not found". A repo that pushes with a classic PAT must pass the
+  same PAT here. The alternative is granting the repo access under the package's
+  *Manage Actions access* settings, after which the secret can be dropped.
 
 ## Git hooks
 

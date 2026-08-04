@@ -33,6 +33,10 @@
 #         summary: ${{ inputs.summary }}
 #         images: ghcr.io/cshuttle/topology
 #         runner: arc-topology
+#       secrets:
+#         # Only if the repo pushes with a classic PAT — see the secret's
+#         # description. Omit and GITHUB_TOKEN is used.
+#         ghcr-token: ${{ secrets.GHCR_WRITE_TOKEN }}
 #
 # NOT covered: repos whose artifact is a compiled binary rather than an image.
 # There is exactly one of those (chrome-exporter) and its build is nothing like
@@ -111,6 +115,17 @@ on:
         type: string
         default: v0.21.7
         required: false
+    secrets:
+      ghcr-token:
+        description: >-
+          Classic PAT with write:packages, for a package the repo-scoped
+          GITHUB_TOKEN cannot touch. `cshuttle` is a personal account, so a
+          package bootstrapped by a manual push is USER-owned: GITHUB_TOKEN 403s
+          on it — including on reads — unless that package grants this repo
+          access under Package settings -> Manage Actions access. Repos that
+          push with a classic PAT must pass the same one here, or the promote
+          step reports the image as missing when it is really unreadable.
+        required: false
     outputs:
       tag:
         description: The git tag created.
@@ -182,7 +197,18 @@ jobs:
           /tmp/crane version
 
       - name: log in to ghcr
-        run: echo "${{ github.token }}" | /tmp/crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+        env:
+          GHCR_TOKEN: ${{ secrets.ghcr-token }}
+          GHCR_USER: ${{ github.repository_owner }}
+        run: |
+          set -eu
+          if [ -n "${GHCR_TOKEN:-}" ]; then
+            printf '%s' "$GHCR_TOKEN" | /tmp/crane auth login ghcr.io -u "$GHCR_USER" --password-stdin
+            echo "authenticated to ghcr as $GHCR_USER with the supplied token"
+          else
+            printf '%s' "${{ github.token }}" | /tmp/crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
+            echo "authenticated to ghcr with GITHUB_TOKEN"
+          fi
 
       # The heart of it: work out which commit the image actually came from,
       # prove it belongs to this branch, then move the version tag onto that
@@ -211,8 +237,12 @@ jobs:
 
           for img in $IMAGES; do
             echo "── $img"
-            if ! digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>/dev/null)"; then
-              echo "::error::$img:$SOURCE_TAG does not exist — nothing to promote."
+            if ! digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>&1)"; then
+              echo "::error::cannot read $img:$SOURCE_TAG — crane said: $digest"
+              echo "::error::If the tag plainly exists, this is almost certainly AUTH, not absence:"
+              echo "::error::a user-owned ghcr package returns the same 'not found' for an unauthorised"
+              echo "::error::read. Pass the repo's classic PAT as the ghcr-token secret, or grant this"
+              echo "::error::repo access under the package's Manage Actions access settings."
               exit 1
             fi
             echo "   $SOURCE_TAG = $digest"
