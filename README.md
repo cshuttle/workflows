@@ -214,10 +214,19 @@ jobs:
   the build minutes. `images` takes several images that version together (an
   app and its sidecar are one release, not two).
 - **Refuses to release a mismatched build.** Unless `verify-source-commit` is
-  false, the source tag's digest must also be reachable under a commit-sha tag
-  for the running ref, so a build that is still in flight — or that failed after
-  the merge — cannot be released by accident. Repos tag per-commit differently,
-  so `<sha>`, the 7-char short sha and `sha-<short>` are all tried.
+  false, each image's digest must be reachable under a commit-sha tag somewhere
+  in the running ref's recent history, so a build still in flight — or one that
+  failed after the merge, or came from another branch — cannot be released by
+  accident. Repos tag per-commit differently, so `<sha>`, the 7-char short sha
+  and `sha-<short>` are all tried.
+- **The tag lands on the ref, and provenance is recorded rather than implied.**
+  Tagging each image's own build commit reads better, but a `GITHUB_TOKEN`
+  cannot create a ref pointing at a commit whose `.github/workflows` differ from
+  the default branch's — the API refuses it exactly as a push does. Any CI change
+  after the last build triggers that, which is when you are most likely to be
+  releasing. Rather than require a PAT with the `workflow` scope in every repo,
+  the tag marks the release point and the **tag message and release body name
+  the build commit of every image**.
 - **Refuses to reuse a tag**, checked against the remote rather than the local
   clone. Released tags are immutable; supersede with a patch instead.
 - **A dispatch button, because the version is a human decision** — a major means
