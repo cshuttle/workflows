@@ -88,13 +88,23 @@ on:
         required: false
       verify-source-commit:
         description: >-
-          Refuse to release unless the source tag's digest is ALSO reachable
-          under a commit-sha tag for the ref this workflow is running on. This is
-          the guard against releasing whatever happened to be `:latest` — a build
-          still running, or one that failed after the merge. Set false only for a
-          repo that does not publish per-commit tags.
+          Refuse to release unless the source tag's digest belongs to a commit on
+          the ref being released — the guard against releasing whatever happened
+          to be `:latest` (a build still running, one that failed after the
+          merge, or a build from another branch). The matched commit is also what
+          the git tag is created on. Set false only for a repo that publishes no
+          per-commit tags.
         type: boolean
         default: true
+        required: false
+      verify-depth:
+        description: >-
+          How many commits back to search for the build. Needs to cover the gap
+          between the ref's HEAD and the last commit that changed a build input —
+          repos with paths-filtered builds accumulate docs and CI commits in
+          between, and each one widens that gap.
+        type: number
+        default: 50
         required: false
       crane-version:
         description: go-containerregistry release to use.
@@ -108,6 +118,11 @@ on:
       digest:
         description: Digest of the first promoted image.
         value: ${{ jobs.release.outputs.digest }}
+      release-commit:
+        description: >-
+          The commit the released image was built from. Equals the ref's HEAD
+          unless later commits changed no build inputs.
+        value: ${{ jobs.release.outputs.release_commit }}
 
 # One release at a time per repo. Two concurrent runs would race on the same tag
 # and the loser would fail halfway, after promoting images but before tagging.
@@ -121,6 +136,7 @@ jobs:
     outputs:
       tag: ${{ steps.plan.outputs.git_tag }}
       digest: ${{ steps.promote.outputs.digest }}
+      release_commit: ${{ steps.promote.outputs.release_commit }}
     steps:
       - name: validate the version
         id: plan
@@ -168,8 +184,9 @@ jobs:
       - name: log in to ghcr
         run: echo "${{ github.token }}" | /tmp/crane auth login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      # The heart of it: prove the thing being released is the thing CI built for
-      # THIS commit, then move the version tag onto that exact digest.
+      # The heart of it: work out which commit the image actually came from,
+      # prove it belongs to this branch, then move the version tag onto that
+      # exact digest.
       - name: promote the tested digest
         id: promote
         env:
@@ -177,11 +194,16 @@ jobs:
           SOURCE_TAG: ${{ inputs.source-tag }}
           IMAGE_TAG: ${{ steps.plan.outputs.image_tag }}
           VERIFY: ${{ inputs.verify-source-commit }}
+          DEPTH: ${{ inputs.verify-depth }}
           SHA: ${{ github.sha }}
         run: |
           set -eu
-          short="$(printf '%s' "$SHA" | cut -c1-7)"
           first_digest=""
+          # The commit the release tag will point at. With verification off we
+          # can only assume the ref's HEAD; with it on, it is discovered below
+          # and may legitimately be an ancestor.
+          RELEASE_COMMIT=""
+          BEHIND=0
           # Collected in a file, not a shell string: appending indented
           # here-lines would carry their leading whitespace into the release
           # body, where markdown reads 4+ spaces as a code block.
@@ -196,24 +218,54 @@ jobs:
             echo "   $SOURCE_TAG = $digest"
 
             if [ "$VERIFY" = "true" ]; then
-              # Repos tag per-commit differently — Topology uses the full sha,
-              # Atlas a 7-char short sha, VirtualWindow `sha-<short>`. Try each
-              # rather than making every caller declare its convention.
+              # WHICH COMMIT IS THIS IMAGE? Not necessarily HEAD. Build workflows
+              # carry paths filters, so a docs- or CI-only commit moves the branch
+              # without producing an image — and then HEAD has no tag at all.
+              # Requiring an exact HEAD match would make those repos unreleasable
+              # until someone touched a build input, which is absurd.
+              #
+              # Instead, walk back from the ref being released and find the most
+              # recent commit whose per-commit tag carries this digest. That both
+              # proves the image came from THIS branch's history (not some other
+              # branch or a stale build) and tells us which commit to tag.
+              #
+              # One `crane ls` up front, then membership is a local grep -Fxq —
+              # otherwise this is a registry round trip per commit per tag form.
+              tags="$(/tmp/crane ls "$img" 2>/dev/null || true)"
+              release_commit=""
               matched=""
-              for cand in "$SHA" "$short" "sha-$short"; do
-                if cd="$(/tmp/crane digest "$img:$cand" 2>/dev/null)" && [ "$cd" = "$digest" ]; then
-                  matched="$cand"
-                  break
-                fi
+              for c in $(git rev-list -n "$DEPTH" "$SHA"); do
+                cs="$(printf '%s' "$c" | cut -c1-7)"
+                # Repos tag per-commit differently — full sha, 7-char short, or
+                # `sha-<short>`. Try each rather than making callers declare it.
+                for cand in "$c" "$cs" "sha-$cs"; do
+                  printf '%s\n' "$tags" | grep -Fxq "$cand" || continue
+                  if cd="$(/tmp/crane digest "$img:$cand" 2>/dev/null)" && [ "$cd" = "$digest" ]; then
+                    release_commit="$c"
+                    matched="$cand"
+                    break
+                  fi
+                done
+                [ -n "$release_commit" ] && break
               done
-              if [ -z "$matched" ]; then
-                echo "::error::$img:$SOURCE_TAG is not the image built from $SHA."
-                echo "::error::Tried tags: $SHA, $short, sha-$short."
-                echo "::error::The build for this commit may still be running, or may have failed."
-                echo "::error::Releasing now would ship a different commit than the one you are on."
+              if [ -z "$release_commit" ]; then
+                echo "::error::$img:$SOURCE_TAG does not match any of the last $DEPTH commits on this ref."
+                echo "::error::Its digest is $digest, tagged by none of them."
+                echo "::error::Either the build for this branch has not finished (or failed), or"
+                echo "::error::$SOURCE_TAG points at a build from somewhere else entirely."
+                echo "::error::Releasing now would ship something this branch never produced."
                 exit 1
               fi
-              echo "   verified: also tagged $matched — this is the build of $short"
+              behind="$(git rev-list --count "$release_commit..$SHA")"
+              echo "   verified: built from $release_commit (tag $matched), $behind commit(s) behind the ref"
+              if [ -n "$RELEASE_COMMIT" ] && [ "$RELEASE_COMMIT" != "$release_commit" ]; then
+                echo "::error::images disagree about which commit they were built from:"
+                echo "::error::  $RELEASE_COMMIT vs $release_commit ($img)."
+                echo "::error::Images released together must come from one build."
+                exit 1
+              fi
+              RELEASE_COMMIT="$release_commit"
+              BEHIND="$behind"
             fi
 
             # Tag BY DIGEST, not by re-resolving :latest. Between the check above
@@ -226,7 +278,10 @@ jobs:
             printf -- '- `%s:%s` — `%s`\n' "$img" "$IMAGE_TAG" "$digest" >> /tmp/released-images.md
           done
 
+          [ -n "$RELEASE_COMMIT" ] || RELEASE_COMMIT="$SHA"
           echo "digest=$first_digest" >> "$GITHUB_OUTPUT"
+          echo "release_commit=$RELEASE_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
           {
             echo 'images<<RELEASE_IMAGES_EOF'
             cat /tmp/released-images.md
@@ -236,17 +291,22 @@ jobs:
       - name: create the annotated tag
         env:
           GIT_TAG: ${{ steps.plan.outputs.git_tag }}
+          RELEASE_COMMIT: ${{ steps.promote.outputs.release_commit }}
+          BEHIND: ${{ steps.promote.outputs.behind }}
         run: |
           set -eu
           # Annotated, not lightweight: `git show <tag>` should answer who cut
           # this and when without a round trip to the API.
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Separate -m flags become separate paragraphs, without dragging YAML
-          # block indentation into the message body.
-          git tag -a "$GIT_TAG" \
+          # Tag the commit the IMAGE came from, not the ref's HEAD. When later
+          # commits changed nothing the build cares about, HEAD never produced an
+          # image — tagging it would name a version after a commit that is not in
+          # it. Usually these are the same commit; when they are not, this is the
+          # honest one.
+          git tag -a "$GIT_TAG" "$RELEASE_COMMIT" \
             -m "$GIT_TAG" \
-            -m "Released by ${{ github.actor }} via the release-image workflow. Promoted the image digest built from ${{ github.sha }} — no rebuild."
+            -m "Released by ${{ github.actor }} via the release-image workflow. Promoted the image digest built from $RELEASE_COMMIT — no rebuild. ($BEHIND commit(s) on ${{ github.ref_name }} after it changed no image inputs.)"
           git push origin "$GIT_TAG"
 
       # github-script rather than curl/gh: `gh` is absent from the bare ARC
