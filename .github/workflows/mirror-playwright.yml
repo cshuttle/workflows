@@ -14,9 +14,11 @@
 # READ only, and the Actions-access panel will not offer the source repo.
 # Proven, not assumed — a real run pulled for 7m21s and then died on
 # `DENIED: permission_denied: write_package`. THIS repo is not the package's
-# source, so the panel CAN grant it Actions access (package settings →
-# Manage Actions access → add cshuttle/workflows, role Write) — until a human
-# does that one-time step, a bump is mirrored by hand:
+# source, so the panel CAN grant it Actions access — and that one-time step
+# was done on 2026-08-19 (package settings → Manage Actions access →
+# cshuttle/workflows, role Write; ghcr login + skip-when-current verified the
+# same day, run 32275828485). If the grant is ever lost, the fallback is by
+# hand:
 #   crane pull --platform linux/amd64 mcr.microsoft.com/playwright:<tag> /tmp/pw.tar
 #   crane push /tmp/pw.tar ghcr.io/cshuttle/playwright:<tag>
 # Nothing silently rots either way: playwright-test.yml's lockstep job fails
