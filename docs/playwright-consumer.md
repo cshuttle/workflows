@@ -98,7 +98,12 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `vite preview --port ${PORT} --strictPort`,
+    // --host 127.0.0.1 is LOAD-BEARING in CI: inside the test container
+    // vite's default localhost bind is IPv6-only (::1), and the url probe
+    // below dials 127.0.0.1 — without the flag the suite times out waiting
+    // for a server that is actually up (it passes on a dev host, where
+    // localhost binds both families, which is what makes it a trap).
+    command: `vite preview --port ${PORT} --strictPort --host 127.0.0.1`,
     url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: !process.env.CI,
   },
@@ -197,7 +202,8 @@ at the root — so a repo whose frontend lives in a subdirectory (Topology:
 ```
 
 with the config's `webServer.command` set to
-`npm --prefix frontend run preview -- --port … --strictPort`. The app's own
+`npm --prefix frontend run preview -- --port … --strictPort --host 127.0.0.1`.
+The app's own
 `package.json` stays untouched apart from a `preview` script; do not convert
 the repo to npm workspaces just for this — the existing CI's `working-directory`
 assumptions would all move.
