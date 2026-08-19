@@ -64,6 +64,23 @@ jobs:
         # bare runner image needs no extra package (no PyYAML here on purpose).
         run: python3 tests/test_komodo_pin.py
 
+  playwright-pin:
+    runs-on: arc-workflows
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: renovate annotation and lockstep upstream agree
+        # playwright-test.yml's lockstep job hardcodes its upstream registry:
+        # a reusable workflow checks out the CALLER's repo, so unlike nmon's
+        # old lockstep it cannot parse its own renovate: annotation at run
+        # time. This is the check that keeps the two lines — a page apart in
+        # the same file — from rotting apart silently.
+        run: |
+          wf=.github/workflows/playwright-test.yml
+          ann=$(grep -oP '#\s*renovate:\s*datasource=docker\s+depName=\K\S+' "$wf")
+          const=$(grep -oP "const upstream = '\K[^']+" "$wf")
+          echo "annotation: ${ann:-<none>} | lockstep const: ${const:-<none>}"
+          [ -n "$ann" ] && [ "$ann" = "$const" ] || { echo "renovate annotation and lockstep upstream disagree in $wf"; exit 1; }
+
   shellcheck:
     runs-on: arc-workflows
     steps:
