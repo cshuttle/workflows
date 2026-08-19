@@ -1,0 +1,214 @@
+# Reusable deploy-pin bump — for a stack that runs a RELEASED, pinned image.
+#
+# WHY THIS EXISTS. `komodo-deploy.yml` (its sibling) redeploys a stack, which is
+# the right event for a self-builder running a floating `:latest`. It does
+# nothing for a stack whose compose interpolates a pinned version, because
+# redeploying without changing the pin re-runs the SAME image — observed
+# 2026-08-18: a merge fired the deploy hook, the stack redeployed, and the app
+# on screen did not change, because the deploy repo still named the previous
+# release. For those stacks the deploy event is not the image push, it is the
+# PIN MOVING.
+#
+# So this workflow writes the version it was handed into the deploy repo's pin
+# file, and stops. Whatever that repo already does on a push — a Komodo
+# ResourceSync, a deploy-on-path-change route — is what deploys; this adds no
+# second deploy path to keep in step with the first.
+#
+# It is deliberately NOT a dependency-update bot. The bot (Renovate) already
+# owns "is there a newer version and may it land unattended"; it just runs on a
+# schedule, and after a release you are waiting on both its cadence and the
+# ghcr tag list, which lags the packages API by minutes (measured: 3 and 8 on
+# two consecutive releases). Called from a release, this workflow already knows
+# the version — nothing to discover, nothing to wait for. Renovate stays the
+# safety net and finds the pin already current.
+#
+# MAJORS ARE NOT AUTOMATED. A major means the deploy needs a human step (a
+# migration, a new variable, a changed route) — the same reason release-image
+# makes the version a human decision, and the reason the estate's Renovate
+# policy automerges minor and patch only. A major bump opens a pull request
+# against the deploy repo instead of committing, and says so in the job summary.
+#
+# Caller (a final job on the release workflow):
+#
+#   pin:
+#     needs: release
+#     uses: cshuttle/workflows/.github/workflows/komodo-pin.yml@v1.2.0
+#     with:
+#       pin-repo: <owner>/<deploy repo>
+#       pin-file: path/to/pins.toml
+#       pin-key: MYAPP_VERSION
+#       version: ${{ inputs.version }}
+#       runner: arc-<repo>
+#     secrets:
+#       PIN_REPO_TOKEN: ${{ secrets.KOMODO_PIN_TOKEN }}
+#
+# pin-repo and pin-file are required inputs with no defaults: this repo is
+# public and names no estate repo, path or host.
+name: komodo-pin
+
+permissions: {}
+
+on:
+  workflow_call:
+    inputs:
+      pin-repo:
+        description: "Deploy repo holding the pin file, as <owner>/<repo>."
+        type: string
+        required: true
+      pin-file:
+        description: "Path to the pin file within pin-repo."
+        type: string
+        required: true
+      pin-key:
+        description: >-
+          The variable to move, e.g. MYAPP_VERSION. The file must contain
+          exactly one line starting `<pin-key>=` — the run fails on zero or
+          several rather than guessing which one runs in production.
+        type: string
+        required: true
+      version:
+        description: "Version to pin, e.g. v1.2.0 (a leading v is optional)."
+        type: string
+        required: true
+      branch:
+        description: "Branch of pin-repo to update."
+        type: string
+        default: main
+        required: false
+      runner:
+        description: >-
+          runs-on target. Defaults to GitHub-hosted ubuntu-latest; repos pass
+          their ARC runner scale set to keep this off metered minutes.
+        type: string
+        default: ubuntu-latest
+        required: false
+    secrets:
+      PIN_REPO_TOKEN:
+        description: >-
+          Token with Contents read/write (and Pull requests write, for the
+          major-version path) on pin-repo ONLY. The caller repo's GITHUB_TOKEN
+          cannot reach another repo, which is why this is a separate secret.
+        required: true
+    outputs:
+      result:
+        description: "committed | pull-request | unchanged"
+        value: ${{ jobs.pin.outputs.result }}
+
+jobs:
+  pin:
+    runs-on: ${{ inputs.runner }}
+    outputs:
+      result: ${{ steps.bump.outputs.result }}
+    steps:
+      - name: Move the pin
+        id: bump
+        env:
+          PIN_TOKEN: ${{ secrets.PIN_REPO_TOKEN }}
+          PIN_REPO: ${{ inputs.pin-repo }}
+          PIN_FILE: ${{ inputs.pin-file }}
+          PIN_KEY: ${{ inputs.pin-key }}
+          VERSION: ${{ inputs.version }}
+          BRANCH: ${{ inputs.branch }}
+          SRC_REPO: ${{ github.repository }}
+        # python3 + stdlib only: the ARC runner image is minimal (no gh CLI, no
+        # jq, no PyYAML), and installing one to move one line is not worth the
+        # minute it costs on every release.
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64, json, os, re, sys, urllib.error, urllib.parse, urllib.request
+
+          API = "https://api.github.com"
+          TOKEN = os.environ["PIN_TOKEN"]
+          repo, path = os.environ["PIN_REPO"], os.environ["PIN_FILE"]
+          key, branch = os.environ["PIN_KEY"], os.environ["BRANCH"]
+          src, new = os.environ["SRC_REPO"], os.environ["VERSION"].strip()
+          if not new.startswith("v"):
+              new = "v" + new
+
+          def die(msg):
+              sys.exit(f"::error::{msg}")
+
+          def api(method, url, payload=None):
+              req = urllib.request.Request(
+                  API + url,
+                  method=method,
+                  data=json.dumps(payload).encode() if payload is not None else None,
+                  headers={
+                      "authorization": f"Bearer {TOKEN}",
+                      "accept": "application/vnd.github+json",
+                      "content-type": "application/json",
+                      "user-agent": "cshuttle-komodo-pin",
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      return json.loads(r.read() or "{}")
+              except urllib.error.HTTPError as e:
+                  detail = e.read().decode(errors="replace")[:300]
+                  die(f"{method} {url} -> HTTP {e.code}: {detail}")
+
+          def out(result):
+              with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+                  fh.write(f"result={result}\n")
+
+          # SEMVER ONLY, and only forward. A pin file is what production runs, so
+          # a workflow that writes any string it is handed can pin a tag that does
+          # not exist, and one that compares strings can walk production BACKWARDS
+          # when an older release is re-run from the dispatch button.
+          sem = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")
+          m_new = sem.match(new)
+          if not m_new:
+              die(f"version {new!r} is not vMAJOR.MINOR.PATCH")
+
+          ref = urllib.parse.quote(branch, safe="")
+          f = api("GET", f"/repos/{repo}/contents/{urllib.parse.quote(path)}?ref={ref}")
+          text = base64.b64decode(f["content"]).decode()
+
+          lines = text.splitlines(keepends=True)
+          hits = [i for i, line in enumerate(lines) if line.startswith(key + "=")]
+          if len(hits) != 1:
+              die(f"{path} has {len(hits)} lines starting {key}= — expected exactly 1")
+          old = lines[hits[0]].split("=", 1)[1].strip()
+
+          if old == new:
+              print(f"{key} is already {new} — nothing to do")
+              out("unchanged")
+              sys.exit(0)
+
+          m_old = sem.match(old)
+          if not m_old:
+              die(f"current pin {old!r} is not vMAJOR.MINOR.PATCH — refusing to overwrite by guess")
+          if tuple(map(int, m_new.groups())) < tuple(map(int, m_old.groups())):
+              die(f"{new} is older than the pinned {old} — refusing to move the pin backwards")
+
+          lines[hits[0]] = f"{key}={new}\n"
+          content = base64.b64encode("".join(lines).encode()).decode()
+          subject = f"chore(deploy): {key} {old} -> {new}"
+          note = f"Released by {src}. The deploy follows from this push."
+
+          if m_new.group(1) != m_old.group(1):
+              # A major waits for a human: open a PR and leave it.
+              head = f"pin/{key.lower().replace('_', '-')}-{new}"
+              sha = api("GET", f"/repos/{repo}/git/ref/heads/{ref}")["object"]["sha"]
+              api("POST", f"/repos/{repo}/git/refs",
+                  {"ref": f"refs/heads/{head}", "sha": sha})
+              api("PUT", f"/repos/{repo}/contents/{urllib.parse.quote(path)}",
+                  {"message": f"{subject}\n\n{note}", "content": content,
+                   "sha": f["sha"], "branch": head})
+              pr = api("POST", f"/repos/{repo}/pulls",
+                       {"title": subject, "head": head, "base": branch,
+                        "body": note + "\n\nMAJOR bump — not committed directly. A major means "
+                                "the deploy needs a human step (a migration, a new variable, a "
+                                "changed route), which is why the release version is a human "
+                                "decision in the first place. Review, then merge to deploy."})
+              print(f"::notice::major bump — opened {pr['html_url']}")
+              out("pull-request")
+              sys.exit(0)
+
+          api("PUT", f"/repos/{repo}/contents/{urllib.parse.quote(path)}",
+              {"message": f"{subject}\n\n{note}", "content": content,
+               "sha": f["sha"], "branch": branch})
+          print(f"::notice::{key}: {old} -> {new} on {repo}@{branch}")
+          out("committed")
+          PY
