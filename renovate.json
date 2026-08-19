@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>cshuttle/renovate-config"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the estate Playwright pin (playwright-test.yml's playwright-image default) against MCR even though consumers pull it from our ghcr mirror. Mirroring cut off upstream discovery: a registry we control only ever contains what we push, so nothing would ever propose an upgrade. Looking up MCR instead also means a bump is proposed ONLY once a matching image really exists — npm publishes ahead of the image, and that mismatch is what broke CI in nmon#76. The regex reads the `# renovate:` annotation plus the `default:` line under it; playwright-test.yml's lockstep job holds every consumer red until its @playwright/test pin follows.",
+      "managerFilePatterns": ["/^\\.github/workflows/playwright-test\\.yml$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s*\\n\\s*default:\\s*\\S+?:(?<currentValue>\\S+)"
+      ]
+    }
+  ]
+}

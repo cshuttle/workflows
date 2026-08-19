@@ -1,0 +1,229 @@
+# The estate's Playwright CI (Homelab-Skills ADR 0017, extracted from nmon —
+# nmon#76/#78/#79 and nmon#125). One estate-wide Playwright pin lives HERE;
+# consumers call this workflow and pin @playwright/test to the same version.
+#
+# Two jobs, deliberately:
+#   lockstep — asserts the version chain has not drifted BEFORE the tests run:
+#              the caller's npm pin, this workflow's image tag, and the ghcr
+#              mirror's content must all agree. Each breaks silently and late
+#              on its own (see the job comment).
+#   test     — the caller's suites inside the pinned browser container.
+name: playwright-test
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: >-
+          The caller's ARC runner label (arc-<repo>). The test job is a
+          `container:` job, so the scale set must run containerMode: dind and
+          carry an ephemeral-storage request for the image (see arc-nmon in
+          cshuttle/main, arc-runners-appset.yaml) — a bare runner has no
+          Docker daemon and the job queues forever or dies at image pull.
+        required: true
+        type: string
+      unit-command:
+        description: >-
+          Optional non-browser suite run in the same container before the e2e
+          suite; empty = skipped. When set, BOTH suites run even if this one
+          fails — a red unit test and a red e2e are different diagnoses, and
+          stopping at the first hides the second.
+        required: false
+        type: string
+        default: ""
+      e2e-command:
+        description: The Playwright suite command.
+        required: false
+        type: string
+        default: npm run test:e2e
+      playwright-image:
+        description: >-
+          The estate Playwright pin (ADR 0017). Override only to debug this
+          workflow itself — a consumer passing its own image has left the
+          estate convention, and lockstep will hold it red against its own
+          package.json anyway.
+        required: false
+        type: string
+        # The MIRROR, not mcr.microsoft.com — mcr measures ~2.2 MB/s to this
+        # site against ghcr's 192 MB/s; the MCR pull was 391s of a ~640s job
+        # (nmon#76). ghcr.io/cshuttle/playwright is an amd64 copy of the same
+        # digest, pushed by this repo's mirror-playwright.yml.
+        #
+        # The renovate: annotation is LOAD-BEARING, not decoration. Mirroring
+        # cut us off from upstream discovery — Renovate would otherwise watch
+        # a registry we control that only ever contains what we push, and so
+        # would never propose an upgrade. This points version lookup back at
+        # MCR (this repo's renovate.json custom manager reads this exact
+        # comment+default pair) while the pull still comes from the mirror —
+        # which also means a bump is only proposed once a matching image
+        # REALLY exists (npm publishes ahead of the image; that mismatch is
+        # what broke CI in nmon#76).
+        # renovate: datasource=docker depName=mcr.microsoft.com/playwright
+        default: ghcr.io/cshuttle/playwright:v1.62.1-noble
+
+jobs:
+  # Assert the playwright version chain has not drifted. Three things must
+  # agree, and each breaks silently and late on its own:
+  #   - caller npm pin ahead of the image -> `playwright install` downloads
+  #     from a Microsoft CDN this site cannot reliably reach; on 2026-07-26 it
+  #     timed out and failed CI outright (nmon#76).
+  #   - tag not mirrored -> ImagePullBackOff that reads like a broken registry
+  #     rather than a stale pin.
+  #   - mirror != upstream -> we quietly test against something that is not
+  #     the image we think it is.
+  # Deliberately cheap: manifest HEADs and GETs only, no image pull, no crane,
+  # no container. It runs in seconds so it can gate every PR without adding to
+  # the queue it exists to protect.
+  lockstep:
+    name: lockstep
+    runs-on: ${{ inputs.runner }}
+    env:
+      PLAYWRIGHT_IMAGE: ${{ inputs.playwright-image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        with:
+          script: |
+            const fs = require('fs');
+            const fail = [];
+
+            // Must match the depName in the renovate: annotation on this
+            // workflow's playwright-image default — they live a page apart in
+            // the same file, which is as close as a job can get to reading
+            // its own workflow source.
+            const upstream = 'mcr.microsoft.com/playwright';
+
+            // ---- what the caller and this workflow say --------------------
+            const pkg  = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+
+            const npmVer  = (pkg.devDependencies || {})['@playwright/test'];
+            const lockVer = lock.packages['node_modules/@playwright/test']?.version;
+            if (!npmVer) { core.setFailed('no @playwright/test in devDependencies — the convention pins it exactly (see cshuttle/workflows README)'); return; }
+
+            const img = process.env.PLAYWRIGHT_IMAGE.match(/^(\S+?):(\S+)$/);
+            if (!img) { core.setFailed(`could not parse image ref "${process.env.PLAYWRIGHT_IMAGE}"`); return; }
+            const [, mirrorRepo, tag] = img;
+            // v1.62.1-noble -> 1.62.1
+            const tagVer = tag.replace(/^v/, '').split('-')[0];
+
+            core.info(`npm ${npmVer} | lock ${lockVer} | image ${mirrorRepo}:${tag} | upstream ${upstream}`);
+
+            // ---- 1. the npm pin is exact and matches the lock -------------
+            if (!/^\d+\.\d+\.\d+$/.test(npmVer))
+              fail.push(`@playwright/test must be pinned exactly, found "${npmVer}". A range lets npm drift ahead of the image.`);
+            if (npmVer !== lockVer)
+              fail.push(`package.json (${npmVer}) and package-lock.json (${lockVer}) disagree`);
+
+            // ---- 2. the npm pin matches the image tag ---------------------
+            if (npmVer !== tagVer)
+              fail.push(`@playwright/test ${npmVer} != image tag ${tag} (${tagVer}). ` +
+                        `They must move together, or the browser is downloaded at test time.`);
+
+            // ---- registry helpers ----------------------------------------
+            const ACCEPT = [
+              'application/vnd.oci.image.index.v1+json',
+              'application/vnd.docker.distribution.manifest.list.v2+json',
+              'application/vnd.oci.image.manifest.v1+json',
+              'application/vnd.docker.distribution.manifest.v2+json',
+            ].join(',');
+
+            async function ghcrToken(repoPath) {
+              const r = await fetch(`https://ghcr.io/token?scope=repository:${repoPath}:pull&service=ghcr.io`);
+              if (!r.ok) throw new Error(`ghcr token: ${r.status}`);
+              return (await r.json()).token;
+            }
+            async function manifest(host, repoPath, ref, token) {
+              const h = { Accept: ACCEPT };
+              if (token) h.Authorization = `Bearer ${token}`;
+              const r = await fetch(`https://${host}/v2/${repoPath}/manifests/${ref}`, { headers: h });
+              if (!r.ok) return { status: r.status };
+              return { status: r.status, body: await r.json() };
+            }
+            // An index has to be resolved to the amd64 child; the mirror is
+            // single-arch already, so this is a no-op there.
+            async function amd64Layers(host, repoPath, ref, token) {
+              let m = await manifest(host, repoPath, ref, token);
+              if (m.status !== 200) return { status: m.status };
+              if (m.body.manifests) {
+                const child = m.body.manifests.find(
+                  (x) => x.platform?.architecture === 'amd64' && x.platform?.os === 'linux');
+                if (!child) return { status: 'no amd64 in index' };
+                m = await manifest(host, repoPath, child.digest, token);
+                if (m.status !== 200) return { status: m.status };
+              }
+              return { status: 200, layers: m.body.layers.map((l) => l.digest) };
+            }
+
+            // ---- 3. the mirror has the tag, with upstream's layers ---------
+            const [mHost, ...mRest] = mirrorRepo.split('/');
+            const mPath = mRest.join('/');
+            const [uHost, ...uRest] = upstream.split('/');
+            const uPath = uRest.join('/');
+
+            const mine = await amd64Layers(mHost, mPath, tag, await ghcrToken(mPath));
+            if (mine.status !== 200) {
+              fail.push(`mirror ${mirrorRepo}:${tag} not pullable (${mine.status}). ` +
+                        `Run cshuttle/workflows' mirror-playwright workflow (or crane by hand) before merging a bump.`);
+            } else {
+              const theirs = await amd64Layers(uHost, uPath, tag, null);
+              if (theirs.status !== 200) {
+                // Upstream being unreachable is not the estate drifting.
+                core.warning(`could not read ${upstream}:${tag} (${theirs.status}) — skipped the content comparison`);
+              } else {
+                // Compare LAYERS, not the manifest digest: the mirror carries
+                // extra OCI labels, so its manifest and config digests will
+                // never equal upstream's even when the content is identical.
+                const a = JSON.stringify(mine.layers);
+                const b = JSON.stringify(theirs.layers);
+                if (a !== b)
+                  fail.push(`mirror content differs from ${upstream}:${tag}\n  mirror:   ${a}\n  upstream: ${b}`);
+                else
+                  core.info(`mirror matches upstream: ${mine.layers.length} identical layers`);
+              }
+            }
+
+            if (fail.length) core.setFailed('lockstep drift:\n- ' + fail.join('\n- '));
+            else core.notice(`lockstep OK — playwright ${npmVer} across npm, image tag and mirror`);
+
+  test:
+    needs: lockstep
+    runs-on: ${{ inputs.runner }}
+    # The image is pinned for its OS libraries (Chromium's system deps — the
+    # bare runner has neither root nor apt, so they cannot be installed
+    # there); the BROWSER ships inside it at PLAYWRIGHT_BROWSERS_PATH. The
+    # PUBLIC package needs no credentials and no packages: scope. If it is
+    # ever made private again, both come back — and the failure will be a 403
+    # on the manifest HEAD, which reads like the image is missing rather than
+    # like a permissions problem. That misdirection cost real time (nmon#76).
+    container: ${{ inputs.playwright-image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: npm ci
+      # A NO-OP by design: lockstep has already proven @playwright/test
+      # matches the image, so the browser is present and this exits in about
+      # a second without touching the network. Left in place so that if the
+      # chain ever drifts past lockstep, the failure is a slow install rather
+      # than a confusing "executable doesn't exist" at test time.
+      - run: npx playwright install chromium
+      - if: inputs.unit-command != ''
+        run: ${{ inputs.unit-command }}
+        id: unit
+        continue-on-error: true
+      - run: ${{ inputs.e2e-command }}
+        id: e2e
+        continue-on-error: true
+      - name: fail if either suite failed
+        if: steps.unit.outcome == 'failure' || steps.e2e.outcome == 'failure'
+        run: |
+          echo "unit: ${{ steps.unit.outcome }}"
+          echo "e2e:  ${{ steps.e2e.outcome }}"
+          exit 1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
