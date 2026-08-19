@@ -244,7 +244,10 @@ jobs:
       unit-command: npm run test:unit # optional; omit if e2e is the only suite
 ```
 
-Adopting it in a repo means, one time:
+This section is the CI half only. What the repo looks like on the **inside** —
+the Playwright config baseline, how the app-under-test boots, test layout, and
+the starter smoke — is [docs/playwright-consumer.md](docs/playwright-consumer.md),
+the consumer half of the convention. Adopting it in a repo means, one time:
 
 - **An ARC runner with dind.** The test job is a `container:` job; the repo's
   scale set needs `containerMode: dind` and an ephemeral-storage request (see
