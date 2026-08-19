@@ -212,8 +212,66 @@ Notes:
   need for `credentials:` on the consumer's `container:`.
 - The consumer must keep its own pin (image tag, and any client library
   version that must match it) in step — this workflow mirrors, it does not
-  reconcile. See `cshuttle/nmon` `.github/workflows/lockstep.yml` for one way
-  to enforce that.
+  reconcile. See the `lockstep` job in `playwright-test.yml` (below) for one
+  way to enforce that.
+
+### `playwright-test.yml`
+
+The estate's browser testing convention (Homelab-Skills ADR 0017): one
+Playwright pin for the whole estate lives in this workflow's
+`playwright-image` default, and consumers run their suites inside that
+container on their own ARC runner. Extracted from `cshuttle/nmon`
+(nmon#76/#78/#79/#125), which proved the pattern: the pinned ghcr mirror
+avoids Microsoft's badly-peered registry, and a `lockstep` job holds every PR
+red until the caller's `@playwright/test` pin, this workflow's image tag, and
+the mirror's actual content agree — each of those drifts silently and late on
+its own.
+
+```yaml
+# .github/workflows/test.yml in the consuming repo
+name: test
+on:
+  pull_request:
+  schedule:
+    - cron: "23 5 * * 1" # weekly: catches the mirror being pruned or MCR re-tagging
+permissions:
+  contents: read
+jobs:
+  test:
+    uses: cshuttle/workflows/.github/workflows/playwright-test.yml@v1.7.0
+    with:
+      runner: arc-<repo>
+      unit-command: npm run test:unit # optional; omit if e2e is the only suite
+```
+
+Adopting it in a repo means, one time:
+
+- **An ARC runner with dind.** The test job is a `container:` job; the repo's
+  scale set needs `containerMode: dind` and an ephemeral-storage request (see
+  `arc-nmon` in `cshuttle/main`, `arc-runners-appset.yaml`).
+- **Pin `@playwright/test` exactly** in `devDependencies`, to the version the
+  image tag carries (`v1.62.1-noble` → `1.62.1`). Ranges fail lockstep: a
+  range lets npm drift ahead of the image and reintroduces a browser download
+  from a CDN this site cannot reliably reach.
+- **Disable Renovate's playwright npm bumps** in the repo's `renovate.json` —
+  the image leads and npm follows (npm publishes ahead of the image; an
+  automatic npm bump breaks CI, nmon#76). When Renovate bumps this repo's
+  image pin and the consumer's `uses:` tag, update `package.json` in that same
+  PR; lockstep holds it red until they agree.
+
+  ```json
+  {
+    "description": "The estate Playwright pin leads and npm follows (cshuttle/workflows playwright-test.yml; ADR 0017). Bump @playwright/test by hand in the same PR as the uses: tag bump — lockstep holds it red until they agree.",
+    "matchPackageNames": ["@playwright/test", "playwright", "playwright-core"],
+    "enabled": false
+  }
+  ```
+
+On failure the caller gets a `playwright-report` artifact (report + traces,
+7 days). Bumping the estate pin: Renovate proposes the image bump here once
+MCR really has the tag; mirror it (`mirror-playwright.yml`, or crane by hand —
+see that workflow's header), merge, cut a release, and Renovate walks the
+consumers' `uses:` tags forward.
 
 ### `release-image.yml`
 

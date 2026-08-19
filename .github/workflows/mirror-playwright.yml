@@ -1,0 +1,69 @@
+# Keep ghcr.io/<owner>/playwright in step with the upstream image that
+# playwright-test.yml pins. Moved here from nmon (nmon#125) when the pin moved:
+# the tag's source of truth is this repo's playwright-test.yml, so the mirror
+# that serves it is operated from here too.
+#
+# WHY A MIRROR AT ALL: mcr.microsoft.com measures ~2.2 MB/s to this site
+# against ghcr.io's 192 MB/s. That pull was 391s of a ~640s test job, and
+# cdn.playwright.dev — same slow path — blew playwright's 30s download timeout
+# under CI contention and failed builds outright. See nmon#76.
+#
+# MANUAL ONLY — there is deliberately no schedule. In nmon, the job's
+# GITHUB_TOKEN could not push to the ghcr package: being the package's
+# Repository source (via the org.opencontainers.image.source label) confers
+# READ only, and the Actions-access panel will not offer the source repo.
+# Proven, not assumed — a real run pulled for 7m21s and then died on
+# `DENIED: permission_denied: write_package`. THIS repo is not the package's
+# source, so the panel CAN grant it Actions access (package settings →
+# Manage Actions access → add cshuttle/workflows, role Write) — until a human
+# does that one-time step, a bump is mirrored by hand:
+#   crane pull --platform linux/amd64 mcr.microsoft.com/playwright:<tag> /tmp/pw.tar
+#   crane push /tmp/pw.tar ghcr.io/cshuttle/playwright:<tag>
+# Nothing silently rots either way: playwright-test.yml's lockstep job fails
+# any PR whose tag is not mirrored, so the reminder arrives before the merge
+# rather than in a scheduled run nobody watches.
+name: mirror-playwright
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Playwright image tag (blank = whatever playwright-test.yml pins)"
+        required: false
+
+jobs:
+  # One source of truth for the tag: playwright-test.yml's playwright-image
+  # default. Passing a tag by hand is for backfilling an older one, not normal
+  # operation — otherwise the mirror and its consumer drift and the failure is
+  # an ImagePullBackOff, which reads like a broken registry rather than a
+  # stale pin.
+  resolve:
+    name: resolve tag
+    runs-on: arc-workflows
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG=$(grep -oP 'default:\s*\S*playwright:\K[^\s"'"'"']+' .github/workflows/playwright-test.yml | head -1)
+          fi
+          [ -n "$TAG" ] || { echo "could not resolve a playwright tag from playwright-test.yml"; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "mirroring playwright:$TAG"
+
+  mirror:
+    needs: resolve
+    permissions:
+      contents: read
+      packages: write
+    # Local ref, not @tag: the mirror mechanics and the pin they serve should
+    # move together in one commit here.
+    uses: ./.github/workflows/mirror-image.yml
+    with:
+      source: mcr.microsoft.com/playwright
+      destination: ghcr.io/${{ github.repository_owner }}/playwright
+      tag: ${{ needs.resolve.outputs.tag }}
+      runner: arc-workflows
