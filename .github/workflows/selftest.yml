@@ -52,6 +52,18 @@ jobs:
           curl -sSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | tar xz actionlint
           ./actionlint -shellcheck= -color
 
+  komodo-pin:
+    runs-on: arc-workflows
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: unit-test the komodo-pin script
+        # komodo-pin.yml edits the line that decides which image version a
+        # stack runs, in a repo the caller cannot see from its own CI, and
+        # nothing downstream re-checks it. The test extracts the embedded
+        # python and drives it against a stubbed API — stdlib only, so the
+        # bare runner image needs no extra package (no PyYAML here on purpose).
+        run: python3 tests/test_komodo_pin.py
+
   shellcheck:
     runs-on: arc-workflows
     steps:

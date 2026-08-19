@@ -34,7 +34,7 @@ Bumping consumers after a release, by surface:
 | Surface | Who moves it |
 | --- | --- |
 | `.github/workflows/ggshield.yml` (~30 repos) | `REUSABLE_REF` in `Monitoring/scripts/reconcile-ggshield-gate.sh`, then a `--sync-workflow` sweep — one PR per repo. Renovate is deliberately disabled on this generated file so the two cannot rubber-band. |
-| The hand-written callers (kustomize-validate, mirror-image, komodo-deploy) | Renovate |
+| The hand-written callers (kustomize-validate, mirror-image, komodo-deploy, komodo-pin) | Renovate |
 | Lefthook `remotes:` refs | By hand — Renovate has no manager for them |
 
 The usage examples below pin `v1.0.0`; check the
@@ -117,6 +117,47 @@ listener 200s and processes async, so keep the stack's `auto_update = true`
 as the backstop. Background: cshuttle/Topology#23 (this fallback) and
 cshuttle/Komodo#120 (the estate-wide `registry_package` router it stands in
 for).
+
+### `komodo-pin.yml`
+
+Moves a deploy **pin** — for stacks that run a *released, pinned* image rather
+than a floating tag. `komodo-deploy.yml` above is the wrong tool for those: a
+redeploy that does not change the pin re-runs the same image, so the release
+never reaches the screen. Called from the release workflow, this writes the
+version into the deploy repo's pin file and stops; whatever that repo already
+does on a push is what deploys.
+
+```yaml
+# final job in the repo's release workflow
+pin:
+  needs: release
+  uses: cshuttle/workflows/.github/workflows/komodo-pin.yml@v1.2.0
+  with:
+    pin-repo: <owner>/<deploy repo>
+    pin-file: path/to/pins.toml
+    pin-key: MYAPP_VERSION
+    version: ${{ inputs.version }}
+    runner: arc-<repo>
+  secrets:
+    PIN_REPO_TOKEN: ${{ secrets.KOMODO_PIN_TOKEN }}
+```
+
+Requires a token with **Contents read/write** (plus **Pull requests write**, for
+the major path) on the *deploy repo only*, granted to the caller repo as an
+Actions secret — a repo's own `GITHUB_TOKEN` cannot reach another repo.
+`pin-repo`/`pin-file` are required by design; this repo names no estate repo or
+path.
+
+This is not a dependency bot and does not replace one: Renovate still owns "is
+there a newer version, and may it land unattended", and after this runs it
+simply finds the pin already current. What it removes is the wait — Renovate's
+schedule plus the ghcr tag list, which lags the packages API by minutes
+(measured at 3 and 8 on two consecutive releases). A **major** version is not
+committed: it opens a PR instead, because a major means the deploy needs a human
+step — the same reason `release-image.yml` makes the version a human decision.
+The script refuses anything it cannot verify: a non-semver version or current
+pin, a key matching zero or several lines, or a version older than the one
+pinned (a re-run of an old release must not roll production back).
 
 ### `mirror-image.yml`
 
