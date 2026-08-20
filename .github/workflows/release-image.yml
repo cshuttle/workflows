@@ -94,12 +94,28 @@ on:
         description: >-
           Refuse to release unless the source tag's digest belongs to a commit on
           the ref being released — the guard against releasing whatever happened
-          to be `:latest` (a build still running, one that failed after the
-          merge, or a build from another branch). The matched commit is also what
-          the git tag is created on. Set false only for a repo that publishes no
-          per-commit tags.
+          to be `:latest` from another branch or a stale build. NOTE this alone
+          cannot catch the release-while-build-in-flight race: the parent
+          commit's image IS in branch history, so it passes by construction —
+          pass expected-commit to close that. The matched commit is recorded in
+          the tag message and release body. Set false only for a repo that
+          publishes no per-commit tags.
         type: boolean
         default: true
+        required: false
+      expected-commit:
+        description: >-
+          When set, the promoted digest must resolve to EXACTLY this commit
+          (full or ≥7-char SHA prefix). This closes the race verify-source-commit
+          cannot: a release dispatched before the merge's build finishes finds
+          the source tag still naming the PARENT commit's image — which is in
+          branch history and so passes verification (nmon v1.14.0 shipped stale
+          code this way, #63). Callers whose artifact builds on every push pass
+          their dispatch context's `github.sha`; leave unset for repos with
+          paths-filtered builds, where the resolved commit legitimately trails
+          HEAD. Requires verify-source-commit.
+        type: string
+        default: ""
         required: false
       require-same-commit:
         description: >-
@@ -236,8 +252,20 @@ jobs:
           SAME_COMMIT: ${{ inputs.require-same-commit }}
           DEPTH: ${{ inputs.verify-depth }}
           SHA: ${{ github.sha }}
+          EXPECTED: ${{ inputs.expected-commit }}
         run: |
           set -eu
+          if [ -n "$EXPECTED" ]; then
+            if [ "$VERIFY" != "true" ]; then
+              echo "::error::expected-commit requires verify-source-commit: without the"
+              echo "::error::commit walk there is nothing to compare the digest against."
+              exit 1
+            fi
+            if ! printf '%s' "$EXPECTED" | grep -qE '^[0-9a-f]{7,40}$'; then
+              echo "::error::expected-commit must be a 7-40 char lowercase hex SHA — got '$EXPECTED'"
+              exit 1
+            fi
+          fi
           first_digest=""
           # The commit the release tag will point at. With verification off we
           # can only assume the ref's HEAD; with it on, it is discovered below
@@ -303,6 +331,24 @@ jobs:
               fi
               behind="$(git rev-list --count "$release_commit..$SHA")"
               echo "   verified: built from $release_commit (tag $matched), $behind commit(s) behind the ref"
+              # The exact-commit gate (#63). Prefix match: EXPECTED may be a
+              # short SHA; release_commit is always full.
+              if [ -n "$EXPECTED" ]; then
+                case "$release_commit" in
+                  "$EXPECTED"*) echo "   matches expected-commit" ;;
+                  *)
+                    echo "::error::$img:$SOURCE_TAG resolves to $release_commit, but expected-commit is $EXPECTED."
+                    echo "::error::The expected commit's build has not finished (or failed), so the source"
+                    echo "::error::tag still names an older build. Releasing now would ship stale code —"
+                    echo "::error::wait for that build and re-run."
+                    exit 1
+                    ;;
+                esac
+              elif [ "$behind" -gt 0 ]; then
+                # Visible in the run summary; repos where trailing HEAD is
+                # routine (paths-filtered builds) simply live with the note.
+                echo "::warning::$img promoted a build from ${release_commit}, $behind commit(s) behind the released ref — pass expected-commit to make a mismatch fail instead."
+              fi
               if [ -n "$RELEASE_COMMIT" ] && [ "$RELEASE_COMMIT" != "$release_commit" ]; then
                 if [ "$SAME_COMMIT" = "true" ]; then
                   echo "::error::images disagree about which commit they were built from:"
