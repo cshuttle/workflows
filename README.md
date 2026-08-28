@@ -82,7 +82,7 @@ jobs:
 ```
 
 Requires the org Actions secret **`GITGUARDIAN_API_KEY`** (scope `scan`; source
-of truth in bws Infrastructure). `secrets: inherit` passes it through — no
+of truth in Key Vault `gitguardian-api-key`). `secrets: inherit` passes it through — no
 per-repo secret needed.
 
 ### `komodo-deploy.yml`
@@ -110,8 +110,8 @@ deploy:
 ```
 
 Requires the org Actions secret **`KOMODO_WEBHOOK_SECRET`** (Komodo Core's
-shared webhook HMAC secret; source of truth in bws "Komodo GitHub Webhook
-Secret") granted to the caller repo. `listener-base` is required by design —
+shared webhook HMAC secret; source of truth in Key Vault
+`komodo-github-webhook-secret`) granted to the caller repo. `listener-base` is required by design —
 this repo is public and carries no estate hostnames. Fire-and-forget: the
 listener 200s and processes async, so keep the stack's `auto_update = true`
 as the backstop. Background: cshuttle/Topology#23 (this fallback) and

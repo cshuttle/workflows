@@ -42,7 +42,7 @@ on:
         required: false
     secrets:
       GITGUARDIAN_API_KEY:
-        description: GitGuardian API key (scope `scan`); source of truth in bws Infrastructure.
+        description: GitGuardian API key (scope `scan`); source of truth in Key Vault gitguardian-api-key.
         required: true
 
 jobs:
