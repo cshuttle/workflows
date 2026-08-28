@@ -24,7 +24,7 @@
 # auto_update = true as the backstop for a missed trigger.
 #
 # Caller (repo must be granted the org Actions secret KOMODO_WEBHOOK_SECRET;
-# source of truth: bws "Komodo GitHub Webhook Secret"):
+# source of truth: Key Vault komodo-github-webhook-secret):
 #
 #   deploy:
 #     needs: build
@@ -73,7 +73,7 @@ on:
       KOMODO_WEBHOOK_SECRET:
         description: >-
           Komodo Core's shared webhook HMAC secret (org Actions secret; source
-          of truth in bws "Komodo GitHub Webhook Secret").
+          of truth in Key Vault komodo-github-webhook-secret).
         required: true
 
 jobs:
