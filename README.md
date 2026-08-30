@@ -283,6 +283,12 @@ does **not** build: the image was built and tested when the commit merged, so
 this promotes that existing digest to a version tag, creates an annotated git
 tag, and publishes a GitHub Release.
 
+It refuses a release that would ship nothing new: when every image's source
+digest already carries a release tag, the build for this ref failed or has not
+finished, so the version is left free and nothing is tagged (one unchanged
+image among several is allowed — a path-filtered build may have had nothing
+to rebuild).
+
 ```yaml
 # .github/workflows/release.yml in the app repo
 name: release
