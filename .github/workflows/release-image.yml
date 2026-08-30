@@ -277,6 +277,44 @@ jobs:
           # body, where markdown reads 4+ spaces as a code block.
           : > /tmp/released-images.md
 
+          # NOTHING NEW TO SHIP? Refuse before a single tag is written. One
+          # unchanged image inside a multi-image release is legitimate — a
+          # path-filtered build that had nothing to rebuild — but EVERY image
+          # already carrying a release tag means this release re-ships the
+          # previous one: the build for this ref failed or has not finished,
+          # so the source tag still names the last release's digest. The
+          # commit walk below passes that by construction (the parent commit
+          # is in branch history), which is how VirtualWindow v1.19.0 and
+          # v1.19.1 both re-tagged v1.18.1 (VirtualWindow#212).
+          total=0
+          unchanged=0
+          for img in $IMAGES; do
+            total=$((total+1))
+            digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>/dev/null)" || continue
+            prior=""
+            # Newest release first: the match, when there is one, is almost
+            # always the last release, so this is usually one round trip.
+            # ponytail: one HEAD per release tag until a hit — fine at tens of
+            # releases; page or cap it if a repo ever has hundreds.
+            for t in $(/tmp/crane ls "$img" 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' | sort -rV); do
+              if [ "$(/tmp/crane digest "$img:$t" 2>/dev/null)" = "$digest" ]; then
+                prior="$t"
+                break
+              fi
+            done
+            if [ -n "$prior" ]; then
+              echo "   $img:$SOURCE_TAG is already released as $prior"
+              unchanged=$((unchanged+1))
+            fi
+          done
+          if [ "$total" -gt 0 ] && [ "$unchanged" -eq "$total" ]; then
+            echo "::error::every image's $SOURCE_TAG digest is already released — this release would ship nothing new."
+            echo "::error::The build for this ref has not finished (or failed), so $SOURCE_TAG still names the"
+            echo "::error::previous release's image. Fix or wait for that build, then re-run; the version"
+            echo "::error::is still free, nothing was tagged."
+            exit 1
+          fi
+
           for img in $IMAGES; do
             echo "── $img"
             if ! digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>&1)"; then
