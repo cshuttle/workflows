@@ -59,7 +59,7 @@ on:
         # REALLY exists (npm publishes ahead of the image; that mismatch is
         # what broke CI in nmon#76).
         # renovate: datasource=docker depName=mcr.microsoft.com/playwright
-        default: ghcr.io/cshuttle/playwright:v1.62.1-noble
+        default: ghcr.io/cshuttle/playwright:v1.63.0-noble
 
 jobs:
   # Assert the playwright version chain has not drifted. Three things must
