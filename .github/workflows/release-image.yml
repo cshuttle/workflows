@@ -144,6 +144,18 @@ on:
         type: string
         default: v0.21.7
         required: false
+      tag-spacing-seconds:
+        description: >-
+          Seconds to wait between promoting one image and the next, when a
+          release carries more than one. ghcr fires a package webhook per tag,
+          and argocd-image-updater writes each one back to the same GitOps repo
+          in its own clone -> commit -> push; two arriving together means the
+          second push is rejected and that image's pin stays stale until the
+          30-minute poll repairs it (cshuttle/main#244). Set 0 for a repo whose
+          images no bot watches.
+        type: number
+        default: 60
+        required: false
     secrets:
       ghcr-token:
         description: >-
@@ -253,6 +265,7 @@ jobs:
           DEPTH: ${{ inputs.verify-depth }}
           SHA: ${{ github.sha }}
           EXPECTED: ${{ inputs.expected-commit }}
+          TAG_SPACING_SECONDS: ${{ inputs.tag-spacing-seconds }}
         run: |
           set -eu
           if [ -n "$EXPECTED" ]; then
@@ -315,6 +328,7 @@ jobs:
             exit 1
           fi
 
+          tagged=0
           for img in $IMAGES; do
             echo "── $img"
             if ! digest="$(/tmp/crane digest "$img:$SOURCE_TAG" 2>&1)"; then
@@ -410,7 +424,19 @@ jobs:
             # Tag BY DIGEST, not by re-resolving :latest. Between the check above
             # and this line a new build could land; promoting the ref we already
             # verified closes that window.
+            # SPACED OUT, when a release promotes more than one image.
+            # ghcr fires one package webhook per tag, and argocd-image-updater
+            # handles each in its own clone -> commit -> push against the SAME
+            # GitOps repo. Two landing together means the second push is
+            # rejected ("cannot lock ref refs/heads/main") and is not retried,
+            # so that image's pin stays on the previous version until the 30m
+            # poll repairs it (cshuttle/main#244, and its
+            # image-updater-serialize-patch.yaml). A push takes a couple of
+            # seconds; a minute between tags is far more than it needs and
+            # costs a one-off wait on a release that is already minutes long.
+            [ "$tagged" -eq 0 ] || sleep "$TAG_SPACING_SECONDS"
             /tmp/crane tag "$img@$digest" "$IMAGE_TAG"
+            tagged=$((tagged+1))
             echo "   tagged $IMAGE_TAG"
 
             [ -n "$first_digest" ] || first_digest="$digest"
