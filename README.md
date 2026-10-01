@@ -392,3 +392,12 @@ Shared pragmatic markdownlint profile (defaults on; noisy prose/structural
 rules off). Copy into a repo as `.trunk/configs/.markdownlint.yaml` and remove
 `markdownlint` from `lint.disabled` in `.trunk/trunk.yaml`. Strict adoption is
 tracked in #7.
+
+## Org scripts
+
+### `scripts/protect-branches.sh`
+
+Applies the tiered default-branch protection across the `cshuttle` org (tier
+membership and required checks live at the top of the script). Idempotent;
+`DRY_RUN=1` prints the bodies, `ONLY=<repo>` limits it to one repo. Needs `gh`
+with org admin and `jq`. Moved here from the retired `cshuttle/k8s` repo.
