@@ -8,7 +8,15 @@
 # cdn.playwright.dev — same slow path — blew playwright's 30s download timeout
 # under CI contention and failed builds outright. See nmon#76.
 #
-# MANUAL ONLY — there is deliberately no schedule. In nmon, the job's
+# RUNS ON THE PR THAT MOVES THE PIN, plus by hand. No schedule: the only event
+# that needs a new mirror tag is a change to playwright-test.yml, so the
+# pull_request trigger below mirrors it while that PR is open. A Renovate bump
+# then cannot merge (or automerge) with its tag unmirrored, and no release can
+# ship a pin the mirror lacks. Until 2026-10-02 this was manual-only, and
+# v1.10.0 shipped v1.63.0-noble with nothing mirrored (#70). The mirror job
+# skips the copy when the tag is already current, so a re-run costs seconds.
+#
+# The Actions-access grant is what makes that possible. In nmon, the job's
 # GITHUB_TOKEN could not push to the ghcr package: being the package's
 # Repository source (via the org.opencontainers.image.source label) confers
 # READ only, and the Actions-access panel will not offer the source repo.
@@ -21,11 +29,14 @@
 # hand:
 #   crane pull --platform linux/amd64 mcr.microsoft.com/playwright:<tag> /tmp/pw.tar
 #   crane push /tmp/pw.tar ghcr.io/cshuttle/playwright:<tag>
-# Nothing silently rots either way: playwright-test.yml's lockstep job fails
-# any PR whose tag is not mirrored, so the reminder arrives before the merge
-# rather than in a scheduled run nobody watches.
+# Consumers' lockstep job is the backstop: it fails any consumer PR whose tag
+# is not mirrored.
 name: mirror-playwright
 on:
+  pull_request:
+    paths:
+      - .github/workflows/playwright-test.yml
+      - .github/workflows/mirror-playwright.yml
   workflow_dispatch:
     inputs:
       tag:
