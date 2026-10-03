@@ -1,6 +1,15 @@
 # CI for this repo itself. It is the supply-chain root for every cshuttle/* repo
 # (the reusable workflows here + the shared Lefthook config in lefthook/), so a
 # bad edit breaks them all — validate before it merges. See issue #4.
+#
+# Pull requests run on GitHub-hosted runners; pushes stay on arc-workflows.
+# This repo is PUBLIC, so a pull_request run can carry a stranger's code from a
+# fork, and the arc-workflows runner is a pod on the production cluster with
+# sudo (cshuttle/Monitoring#1285). Nothing here needs the LAN — every job is
+# apt, a GitHub release download, or a local check — so the hosted runner
+# tests exactly the same thing. Hosted minutes are free on a public repo, so
+# the estate's zero-ubuntu-latest billing rule does not apply. A push can only
+# come from someone with write access, which is why it keeps the ARC runner.
 name: selftest
 
 on:
@@ -12,7 +21,7 @@ permissions:
 
 jobs:
   lefthook-config:
-    runs-on: arc-workflows
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     env:
       LEFTHOOK_VERSION: 2.1.9
     steps:
@@ -39,7 +48,7 @@ jobs:
           ( cd "$tmp" && lefthook validate )
 
   actionlint:
-    runs-on: arc-workflows
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     env:
       ACTIONLINT_VERSION: 1.7.12
     steps:
@@ -53,7 +62,7 @@ jobs:
           ./actionlint -shellcheck= -color
 
   komodo-pin:
-    runs-on: arc-workflows
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: unit-test the komodo-pin script
@@ -65,7 +74,7 @@ jobs:
         run: python3 tests/test_komodo_pin.py
 
   playwright-pin:
-    runs-on: arc-workflows
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: renovate annotation and lockstep upstream agree
@@ -82,7 +91,7 @@ jobs:
           [ -n "$ann" ] && [ "$ann" = "$const" ] || { echo "renovate annotation and lockstep upstream disagree in $wf"; exit 1; }
 
   shellcheck:
-    runs-on: arc-workflows
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: shellcheck shared scripts
