@@ -32,6 +32,12 @@ done
 built=0; skipped=0; failed=0; fails=""
 for kf in "${kfiles[@]}"; do
   d="${kf%/kustomization.yaml}"
+  # A kustomize Component cannot be built on its own: it patches and fills in
+  # the resources of the kustomization that includes it. It is validated
+  # through those callers, which this loop builds too.
+  if grep -q '^kind: Component' "$kf"; then
+    skipped=$((skipped + 1)); echo "  SKIP (component)  ${d}"; continue
+  fi
   if out="$(kustomize build --enable-helm "$d" 2>/tmp/kv_err)"; then
     if printf '%s' "$out" | kubeconform -strict -summary -ignore-missing-schemas >/dev/null 2>/tmp/kv_kc; then
       built=$((built + 1))
