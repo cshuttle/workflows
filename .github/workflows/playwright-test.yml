@@ -36,6 +36,19 @@ on:
         required: false
         type: string
         default: npm run test:e2e
+      shards:
+        description: >-
+          Split the e2e suite across this many runner pods, 1-10. Each shard is
+          its own job and pulls the image once, so it pays off only when the
+          suite is minutes long (nmon: 543 tests, 3.3 min on one pod). With
+          more than 1, e2e-command MUST pass `--shard=$SHARD` to Playwright
+          (e.g. `npm run test:e2e -- --shard=$SHARD`); SHARD is set to
+          `<n>/<total>` on every shard, and a command without it fails fast
+          rather than running the whole suite N times. The unit suite runs on
+          shard 1 only. Mind the caller's runner cap: every shard holds a pod.
+        required: false
+        type: number
+        default: 1
       playwright-image:
         description: >-
           The estate Playwright pin (ADR 0017). Override only to debug this
@@ -79,7 +92,25 @@ jobs:
     runs-on: ${{ inputs.runner }}
     env:
       PLAYWRIGHT_IMAGE: ${{ inputs.playwright-image }}
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
     steps:
+      # The test job's matrix, as a JSON list [1..shards]. Computed here
+      # because an expression cannot build a range, and this job already runs
+      # first; failing here also stops a bad value before any pod is spent.
+      - id: shards
+        env:
+          SHARDS: ${{ inputs.shards }}
+          E2E: ${{ inputs.e2e-command }}
+        run: |
+          case "$SHARDS" in [1-9]|10) ;; *) echo "::error::shards must be 1-10, got '$SHARDS'"; exit 1 ;; esac
+          # The literal text $SHARD is what is being looked for, so no expansion.
+          # shellcheck disable=SC2016
+          if [ "$SHARDS" -gt 1 ] && [[ "$E2E" != *'$SHARD'* ]]; then
+            echo "::error::shards=$SHARDS but e2e-command does not pass \$SHARD, so every shard would run the whole suite. Use e.g. 'npm run test:e2e -- --shard=\$SHARD'."
+            exit 1
+          fi
+          echo "list=[$(seq -s, 1 "$SHARDS")]" >>"$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         with:
@@ -188,6 +219,14 @@ jobs:
 
   test:
     needs: lockstep
+    # One shard keeps the plain `test` name, so a caller that does not shard
+    # sees exactly the check it always had.
+    name: ${{ inputs.shards > 1 && format('test ({0}/{1})', matrix.shard, inputs.shards) || 'test' }}
+    strategy:
+      # Every shard reports: one red shard must not hide another's failures.
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.lockstep.outputs.shards) }}
     runs-on: ${{ inputs.runner }}
     # The image is pinned for its OS libraries (Chromium's system deps — the
     # bare runner has neither root nor apt, so they cannot be installed
@@ -206,12 +245,14 @@ jobs:
       # chain ever drifts past lockstep, the failure is a slow install rather
       # than a confusing "executable doesn't exist" at test time.
       - run: npx playwright install chromium
-      - if: inputs.unit-command != ''
+      - if: inputs.unit-command != '' && matrix.shard == 1
         run: ${{ inputs.unit-command }}
         id: unit
         continue-on-error: true
       - run: ${{ inputs.e2e-command }}
         id: e2e
+        env:
+          SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         continue-on-error: true
       - name: fail if either suite failed
         if: steps.unit.outcome == 'failure' || steps.e2e.outcome == 'failure'
@@ -222,7 +263,9 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: failure()
         with:
-          name: playwright-report
+          # Unique per shard: upload-artifact refuses a second artifact of the
+          # same name in one run.
+          name: ${{ inputs.shards > 1 && format('playwright-report-{0}', matrix.shard) || 'playwright-report' }}
           path: |
             playwright-report/
             test-results/
