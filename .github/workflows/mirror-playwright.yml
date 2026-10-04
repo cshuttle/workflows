@@ -51,6 +51,11 @@ jobs:
   # stale pin.
   resolve:
     name: resolve tag
+    # Same-repo PRs only. This repo is public and arc-workflows is self-hosted,
+    # so a fork PR touching the paths above would run its own code on our
+    # runner (Monitoring#1285). A fork's token cannot push to ghcr anyway, so
+    # nothing is lost; `mirror` needs this job and skips with it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: arc-workflows
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
