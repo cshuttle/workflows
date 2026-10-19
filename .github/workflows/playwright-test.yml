@@ -49,6 +49,16 @@ on:
         required: false
         type: number
         default: 1
+      upload:
+        description: >-
+          When the `playwright-report` artifact (playwright-report/ and
+          test-results/, screenshots included) is uploaded. `failure` (the
+          default) uploads only when a suite fails, so a green run has no
+          artifact. `always` uploads on every run, so a green run keeps its
+          screenshots for review. Any other value fails the lockstep job.
+        required: false
+        type: string
+        default: failure
       playwright-image:
         description: >-
           The estate Playwright pin (ADR 0017). Override only to debug this
@@ -95,6 +105,12 @@ jobs:
     outputs:
       shards: ${{ steps.shards.outputs.list }}
     steps:
+      # A typo in `upload` would otherwise skip the artifact without a word.
+      - name: check the upload input
+        env:
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          case "$UPLOAD" in failure|always) ;; *) echo "::error::upload must be 'failure' or 'always', got '$UPLOAD'"; exit 1 ;; esac
       # The test job's matrix, as a JSON list [1..shards]. Computed here
       # because an expression cannot build a range, and this job already runs
       # first; failing here also stops a bad value before any pod is spent.
@@ -261,7 +277,7 @@ jobs:
           echo "e2e:  ${{ steps.e2e.outcome }}"
           exit 1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        if: failure()
+        if: failure() || inputs.upload == 'always'
         with:
           # Unique per shard: upload-artifact refuses a second artifact of the
           # same name in one run.

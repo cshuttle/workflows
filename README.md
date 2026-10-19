@@ -256,6 +256,10 @@ that on three:
       e2e-command: npm run test:e2e -- --shard=$SHARD
 ```
 
+Set `upload: always` to keep the report and screenshots of a **green** run: the
+`playwright-report` artifact is uploaded only on failure by default. The input
+defaults to `failure`, so every existing caller is unchanged.
+
 This section is the CI half only. What the repo looks like on the **inside** —
 the Playwright config baseline, how the app-under-test boots, test layout, and
 the starter smoke — is [docs/playwright-consumer.md](docs/playwright-consumer.md),
