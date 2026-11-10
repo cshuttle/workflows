@@ -99,7 +99,61 @@ generic — no hostnames, addresses, or estate topology here.
   or files an issue saying what drifted.
 - Write for the reader who wasn't there: spell out terms on first use, use
   the repo's `CONTEXT.md` vocabulary, prefer prose + tables over walls of
-  bullets.
+  bullets (a how-to's numbered steps are the exception, below).
+
+### Kinds of human doc
+
+These rules cover docs written for people. Agent-facing files (`AGENTS.md`,
+`CLAUDE.md`, skills, `docs/agents/`) follow the AGENTS.md contract below.
+`CONTEXT.md` keeps its own glossary format.
+
+| Kind | What it is | Where it lives |
+|---|---|---|
+| **Guide** | A page with exactly one [Diátaxis](https://diataxis.fr/) type | `docs/tutorials/`, `docs/how-to/`, `docs/reference/`, `docs/explanation/` |
+| **Record** | A log of what was decided, found or planned: ADR, research note, spec, changelog | `docs/adr/`, `docs/research/`, `docs/specs/`, `CHANGELOG.md` |
+| **Landing page** | The repo's `README.md`: what the repo is, how to start, links to the guides | repo root |
+
+The four guide types:
+
+| Type | The reader wants to | Example |
+|---|---|---|
+| Tutorial | Learn by doing, start to finish | "Your first deploy" |
+| How-to | Do one task they already understand | "Restore a guest from backup" |
+| Reference | Look up a fact | A table of settings, ports or commands |
+| Explanation | Understand why | How the backup chain works and why |
+
+- **One page, one type.** A how-to that needs a long "why" links to an
+  explanation page instead of holding it.
+- **"How-to" is the only name for a task guide.** Do not start new
+  `*-runbook.md` files.
+- Records keep their own formats (the ADR format above) and get no type.
+
+### Writing rules
+
+New human docs, guides and records alike, follow the writing rules of
+ASD-STE100 Simplified Technical English. The approved-word dictionary is
+not used: tool names and technical terms stay as they are.
+
+1. A step is 20 words or fewer. Any other sentence is 25 words or fewer.
+2. One instruction per sentence. One topic per paragraph, six sentences
+   or fewer.
+3. Write a step as a command: "Run `make test`", not "You should run the
+   tests".
+4. Use the active voice: "The job deletes the file", not "The file is
+   deleted".
+5. Use one word for one thing. Explain a new term where it first appears.
+6. Number the steps of a procedure. Put a warning before the step it is
+   about, not after it.
+7. Keep code, paths, commands and output exactly as they are.
+
+### Adoption
+
+- A new doc follows these rules from its first commit.
+- An existing doc follows them after its next large edit. In that same PR,
+  move it into its type folder and fix the links that point to it. Leave
+  no stub at the old path.
+- Code review checks the rules. Add a prose linter only if review keeps
+  catching the same mistake.
 
 ## AGENTS.md contract
 
