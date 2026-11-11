@@ -378,7 +378,8 @@ jobs:
 ### `lefthook/base.yml`
 
 Shared advisory pre-commit hooks (shellcheck, gitleaks, ggshield, yamllint,
-whitespace / merge-conflict). Consume from any repo with a tiny `lefthook.yml`:
+whitespace / merge-conflict, doc-check). `doc-check` warns about glossary
+`_Avoid_` words and long sentences in the new lines of human docs. Consume from any repo with a tiny `lefthook.yml`:
 
 ```yaml
 remotes:
