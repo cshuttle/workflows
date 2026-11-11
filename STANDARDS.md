@@ -152,8 +152,10 @@ not used: tool names and technical terms stay as they are.
 - An existing doc follows them after its next large edit. In that same PR,
   move it into its type folder and fix the links that point to it. Leave
   no stub at the old path.
-- Code review checks the rules. Add a prose linter only if review keeps
-  catching the same mistake.
+- Code review checks the rules. The shared pre-commit hook runs
+  `scripts/doc-check.py`, which warns about the glossary's `_Avoid_` words
+  and long sentences in new lines. Review owns the rest. Add a full prose
+  linter only if review keeps catching the same mistake.
 
 ## AGENTS.md contract
 

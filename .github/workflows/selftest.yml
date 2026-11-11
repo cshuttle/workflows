@@ -73,6 +73,16 @@ jobs:
         # bare runner image needs no extra package (no PyYAML here on purpose).
         run: python3 tests/test_komodo_pin.py
 
+  doc-check:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: unit-test the doc-check script
+        # lefthook/base.yml fetches scripts/doc-check.py from main on every
+        # commit that stages markdown, in every repo, so a bad edit here
+        # reaches the estate at once. Stdlib only, like the script.
+        run: python3 tests/test_doc_check.py
+
   playwright-pin:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:
