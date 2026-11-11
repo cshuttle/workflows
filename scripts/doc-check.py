@@ -42,7 +42,14 @@ def is_human_doc(path):
 
 def glossary(root="."):
     """Return ({avoid phrase: term}, {names that are allowed})."""
-    avoids, names = {}, {Path(root).resolve().name.lower()}
+    # The repo's own name is allowed ("Topology" may be an _Avoid_ word). Read it
+    # from origin: a worktree's folder is often "<repo>-<topic>".
+    origin = subprocess.run(["git", "-C", str(root), "remote", "get-url", "origin"],
+                            capture_output=True, text=True, check=False).stdout.strip()
+    names = {Path(root).resolve().name.lower()}
+    if origin:
+        names.add(re.split(r"[/:]", origin.rstrip("/"))[-1].removesuffix(".git").lower())
+    avoids = {}
     for name in ("CONTEXT.md", "GLOSSARY.md"):
         f = Path(root) / name
         if not f.is_file():
@@ -148,12 +155,19 @@ def check(path, avoids, names=(), added=None):
     return warnings
 
 
-def main(argv):
-    git_args = None
+def diff_args(argv):
+    """Split argv into (git diff args or None, files). --base diffs from the merge-base."""
     if argv[:1] == ["--staged"]:
-        git_args, argv = ["--cached"], argv[1:]
-    elif argv[:1] == ["--base"]:
-        git_args, argv = [argv[1]], argv[2:]
+        return ["--cached"], argv[1:]
+    if argv[:1] == ["--base"]:
+        fork = subprocess.run(["git", "merge-base", argv[1], "HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        return [fork], argv[2:]
+    return None, argv
+
+
+def main(argv):
+    git_args, argv = diff_args(argv)
     avoids, names = glossary()
     warnings = [w for f in argv if is_human_doc(f)
                 for w in check(f, avoids, names, added_lines(f, git_args))]

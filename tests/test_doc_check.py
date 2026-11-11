@@ -43,10 +43,17 @@ WORDS = lambda n: " ".join(["word"] * (n - 1)) + " end."
 class DocCheck(unittest.TestCase):
     def setUp(self):
         self.old = os.getcwd()
-        self.dir = Path(tempfile.mkdtemp()) / "msd"
+        # A worktree-style folder name: the repo name must come from origin.
+        self.dir = Path(tempfile.mkdtemp()) / "msd-topic"
         self.dir.mkdir()
         os.chdir(self.dir)
+        self.git("init", "-q", "-b", "main")
+        self.git("remote", "add", "origin", "https://github.com/cshuttle/MSD.git")
         (self.dir / "CONTEXT.md").write_text(GLOSSARY)
+
+    def git(self, *a):
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                       cwd=self.dir, check=True, capture_output=True)
 
     def tearDown(self):
         os.chdir(self.old)
@@ -64,7 +71,7 @@ class DocCheck(unittest.TestCase):
         self.assertNotIn("entity (the ha word)", avoids)
         self.assertIn("entity", avoids)            # parenthetical stripped
         self.assertFalse(any("namespace" in a for a in avoids))  # prose item dropped
-        self.assertIn("msd", names)                # the repo's own name
+        self.assertIn("msd", names)                # the repo's name, from origin
 
     def test_avoid_word_flagged(self):
         w = self.run_on("It shows smart device details.\n\nIt edits internal DNS.\n")
@@ -73,7 +80,7 @@ class DocCheck(unittest.TestCase):
         self.assertIn("README.md:3:", w[1])
 
     def test_allowed_names_and_code_not_flagged(self):
-        text = ("# MSD\n\nEach detected device has a pin. Run `smart device` now.\n\n"
+        text = ("# Title\n\nMSD: each detected device has a pin. Run `smart device` now.\n\n"
                 "```\ninternal DNS\n```\n\n| internal DNS |\n")
         self.assertEqual(self.run_on(text), [])
 
@@ -85,9 +92,7 @@ class DocCheck(unittest.TestCase):
         self.assertIn("README.md:6: step has 21 words", w[1])
 
     def test_staged_checks_only_added_lines(self):
-        git = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t",
-                                         *a], cwd=self.dir, check=True, capture_output=True)
-        git("init", "-q")
+        git = self.git
         (self.dir / "README.md").write_text(f"Old smart device text.\n\n{WORDS(30)}\n")
         git("add", "README.md")
         git("commit", "-qm", "old")
@@ -97,6 +102,27 @@ class DocCheck(unittest.TestCase):
         w = dc.check("README.md", *dc.glossary(), dc.added_lines("README.md", ["--cached"]))
         self.assertEqual(len(w), 1, w)
         self.assertIn('README.md:5: avoid "internal dns"', w[0])
+
+    def test_base_diffs_from_merge_base(self):
+        # Main deletes an old line the branch still has. Diffed from main's tip,
+        # that old line would look "added" by the branch; from the merge-base it is not.
+        (self.dir / "README.md").write_text("Old internal DNS line.\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "root")
+        self.git("checkout", "-q", "-b", "topic")
+        self.git("checkout", "-q", "main")
+        (self.dir / "README.md").write_text("\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "main moves on")
+        self.git("checkout", "-q", "topic")
+        (self.dir / "README.md").write_text("Old internal DNS line.\n\nTopic adds smart device.\n")
+        self.git("add", "README.md")
+        self.git("commit", "-qm", "topic")
+        git_args, files = dc.diff_args(["--base", "main", "README.md"])
+        w = dc.check("README.md", *dc.glossary(), dc.added_lines("README.md", git_args))
+        self.assertEqual(files, ["README.md"])
+        self.assertEqual(len(w), 1, w)
+        self.assertIn('avoid "smart device"', w[0])
 
     def test_which_files_are_human_docs(self):
         for name in ("docs/how-to/x.md", "docs/agents/x.md", "AGENTS.md", "sub/README.md"):
