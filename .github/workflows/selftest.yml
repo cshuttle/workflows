@@ -26,6 +26,7 @@ jobs:
       LEFTHOOK_VERSION: 2.1.9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/apt-mirrors
 
       - name: YAML-parse lefthook/base.yml (independent of lefthook)
         # Catches the unquoted-scalar class that broke every fresh `lefthook
@@ -117,6 +118,7 @@ jobs:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/apt-mirrors
       - name: shellcheck shared scripts
         # The scripts here run in every consumer (CI + Lefthook pre-push), so a
         # bug propagates everywhere — lint them at the root. The minimal ARC
