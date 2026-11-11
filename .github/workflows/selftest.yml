@@ -83,6 +83,19 @@ jobs:
         # reaches the estate at once. Stdlib only, like the script.
         run: python3 tests/test_doc_check.py
 
+  apt-mirrors:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: unit-test the apt-mirrors script
+        # It rewrites /etc/apt on every consumer's runner before apt runs, so a
+        # bad rewrite breaks every apt-get step in the estate at once.
+        run: python3 tests/test_apt_mirrors.py
+      - name: run the action on this runner
+        uses: ./.github/actions/apt-mirrors
+      - name: apt-get update through the mirror list
+        run: sudo apt-get update -q
+
   playwright-pin:
     runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || 'arc-workflows' }}
     steps:

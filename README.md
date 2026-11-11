@@ -373,6 +373,31 @@ jobs:
   same PAT here. The alternative is granting the repo access under the package's
   *Manage Actions access* settings, after which the secret can be dropped.
 
+## Composite actions
+
+### `.github/actions/apt-mirrors`
+
+Points apt's Ubuntu sources at a list of mirrors, using apt's own
+`mirror+file:` transport (`man apt-transport-mirror`). When one mirror fails,
+apt tries the next, so `apt-get update` survives a dead or unresolvable
+archive. The order is fixed, not ranked by speed: two independent mirrors,
+then the canonical archive last. The archive goes last because apt picks a
+mirror per file, so a dead first mirror costs a timeout on every file; with
+the archive unresolvable, archive-first did not finish `apt-get update` in
+280 s and mirror-first took 2 s. PPAs and other third-party sources are left
+alone. The logic is `scripts/apt-mirrors.sh`.
+
+Run it before the first `apt-get` step:
+
+```yaml
+steps:
+  - uses: cshuttle/workflows/.github/actions/apt-mirrors@v1.13.0
+  - run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-yaml
+```
+
+Pass `mirrors:` (newline-separated URLs, highest priority first) to use a
+different list.
+
 ## Git hooks
 
 ### `lefthook/base.yml`

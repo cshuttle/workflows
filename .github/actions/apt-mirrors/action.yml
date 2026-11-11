@@ -1,0 +1,20 @@
+name: apt-mirrors
+description: >-
+  Point apt's Ubuntu sources at a mirror list with fallback (apt's mirror+file
+  transport), so `apt-get update` survives a dead archive. Run it before the
+  first apt-get step.
+inputs:
+  mirrors:
+    description: >-
+      Newline-separated Ubuntu mirror URLs, highest priority first. Empty keeps
+      the default: two independent mirrors, then the canonical archive.
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: point apt at the mirror list
+      shell: sh
+      env:
+        MIRRORS: ${{ inputs.mirrors }}
+      run: sudo env APT_MIRRORS="$MIRRORS" sh "$GITHUB_ACTION_PATH/../../../scripts/apt-mirrors.sh"
