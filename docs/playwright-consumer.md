@@ -60,10 +60,11 @@ ahead of the image:
 When Renovate walks your `uses:` tag forward after an estate pin bump, update
 `package.json` and the lockfile in that same PR.
 
-On CWS, run `npx playwright install chromium` once per machine for local and
-agent loops (ADR 0017 — browsers co-located, never a remote endpoint). In CI
-the browser ships inside the image; the workflow's `playwright install` step
-is a deliberate no-op.
+Do not install or run a browser on CWS (ADR 0017, amended 2026-11-14).
+Playwright suites run in CI on the ARC runners. On CWS, run only browser-free
+tests. For e2e, push the branch and open a draft PR, then read `gh pr checks`.
+In CI the browser ships inside the image; the workflow's `playwright install`
+step is a deliberate no-op.
 
 ## Playwright config baseline
 
