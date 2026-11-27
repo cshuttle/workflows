@@ -98,8 +98,9 @@ generic — no hostnames, addresses, or estate topology here.
   data flow) updates the estate model / affected docs in the same change,
   or files an issue saying what drifted.
 - Write for the reader who wasn't there: spell out terms on first use, use
-  the repo's `CONTEXT.md` vocabulary, prefer prose + tables over walls of
-  bullets (a how-to's numbered steps are the exception, below).
+  the repo's `CONTEXT.md` vocabulary, and write neither a wall of text nor
+  a wall of bullets (the layout rules below say when to use a list, a table
+  or a heading).
 
 ### Kinds of human doc
 
@@ -145,6 +146,29 @@ not used: tool names and technical terms stay as they are.
 6. Number the steps of a procedure. Put a warning before the step it is
    about, not after it.
 7. Keep code, paths, commands and output exactly as they are.
+
+### Layout rules
+
+New human docs follow these layout rules. The reference is ISO/IEC/IEEE
+26514, the standard for information for users of systems and software.
+
+**These rules are taken from published highlights of that standard and of
+two related ones (IEC/IEEE 82079-1 and ISO 24495-1). They are not the text
+of an ISO standard, and they are no claim of compliance with one.**
+
+1. Use a bulleted list for items with no order: options, conditions,
+   things the reader needs first.
+2. Use a numbered list only for steps that the reader does in sequence.
+3. Do not mix numbered items and bulleted items in one list.
+4. Keep related facts together in a small group. Put white space between
+   groups.
+5. Give each section a heading that tells the reader what follows.
+6. Replace complex "if X, then Y" text with a table or a flowchart.
+7. Do not use colour alone to carry meaning.
+8. Put a figure next to the text that refers to it.
+
+The same rules apply to text that a person reads inside a tool, for
+example the description of an automation.
 
 ### Adoption
 
