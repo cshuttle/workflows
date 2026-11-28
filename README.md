@@ -385,7 +385,9 @@ then the canonical archive last. The archive goes last because apt picks a
 mirror per file, so a dead first mirror costs a timeout on every file; with
 the archive unresolvable, archive-first did not finish `apt-get update` in
 280 s and mirror-first took 2 s. PPAs and other third-party sources are left
-alone. The logic is `scripts/apt-mirrors.sh`.
+alone. Before it writes the list, the script tests each mirror with a 5 s
+`curl` and leaves out one that does not answer; if none answers, it keeps
+them all. The logic is `scripts/apt-mirrors.sh`.
 
 Run it before the first `apt-get` step:
 
