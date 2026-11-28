@@ -21,8 +21,9 @@ LEGACY = "deb http://azure.archive.ubuntu.com/ubuntu/ noble main\n"
 PPA = "deb https://ppa.launchpadcontent.net/git-core/ppa/ubuntu/ noble main\n"
 
 
-def run(root, mirrors=None):
-    env = dict(os.environ, APT_MIRRORS_ROOT=str(root))
+def run(root, mirrors=None, probe="true"):
+    # The probe is stubbed: the unit test must not depend on the network.
+    env = dict(os.environ, APT_MIRRORS_ROOT=str(root), APT_MIRRORS_PROBE=probe)
     env.pop("APT_MIRRORS", None)
     if mirrors is not None:
         env["APT_MIRRORS"] = mirrors
@@ -72,6 +73,26 @@ def main():
             "https://a.example/ubuntu/\tpriority:1",
             "https://b.example/ubuntu/\tpriority:2",
         ], lines
+
+    # A mirror that does not answer is left out, and the rest move up.
+    two = "https://a.example/ubuntu/\nhttps://b.example/ubuntu/\n"
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        setup(root)
+        probe = root / "probe.sh"
+        probe.write_text('case "$1" in *a.example*) exit 1 ;; esac\n')
+        out = run(root, mirrors=two, probe=f"sh {probe}")
+        lines = (root / "etc/apt/apt-mirrors.txt").read_text().splitlines()
+        assert lines == ["https://b.example/ubuntu/\tpriority:1"], lines
+        assert "::warning::apt-mirrors: https://a.example/ubuntu/" in out, out
+
+    # No mirror answers: keep the full list, the probe itself may be broken.
+    with tempfile.TemporaryDirectory() as t:
+        root = Path(t)
+        setup(root)
+        run(root, mirrors=two, probe="false")
+        lines = (root / "etc/apt/apt-mirrors.txt").read_text().splitlines()
+        assert len(lines) == 2, lines
     print("ok")
 
 

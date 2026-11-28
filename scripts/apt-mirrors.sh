@@ -28,6 +28,8 @@
 # Env:
 #   APT_MIRRORS       newline-separated mirror URLs, highest priority first
 #                     (default: two independent mirrors, then the canonical archive)
+#   APT_MIRRORS_PROBE command run with one mirror URL; exit 0 means the mirror
+#                     answers (default: curl, 5 s limit). Tests stub it.
 #   APT_MIRRORS_ROOT  filesystem root to edit; tests only (default: /)
 set -eu
 
@@ -37,6 +39,25 @@ DEFAULT_MIRRORS='https://mirrors.edge.kernel.org/ubuntu/
 https://mirror.math.princeton.edu/pub/ubuntu/
 http://archive.ubuntu.com/ubuntu/'
 MIRRORS="${APT_MIRRORS:-$DEFAULT_MIRRORS}"
+
+# Drop a mirror that does not answer now, before apt meets it. The timeout
+# below did not stop a hang: on 2026-11-27 mirrors.edge.kernel.org went dark
+# and `apt-get update` sat on it for 13 minutes in two jobs, until they were
+# cancelled, with the 15 s timeout in place. A 5 s curl failed on that mirror
+# the whole time. If no mirror answers (or curl is missing), keep the full
+# list: the probe may be what is broken.
+PROBE="${APT_MIRRORS_PROBE:-curl -fsS -m 5 -o /dev/null}"
+LIVE=""
+for m in $MIRRORS; do
+	# shellcheck disable=SC2086 # PROBE is a command line, split on purpose
+	if $PROBE "$m" >/dev/null 2>&1; then
+		LIVE="$LIVE$m
+"
+	else
+		echo "::warning::apt-mirrors: $m does not answer; left out of the list"
+	fi
+done
+[ -n "$LIVE" ] && MIRRORS="$LIVE"
 
 mkdir -p "$ROOT/etc/apt/apt.conf.d"
 printf '%s\n' "$MIRRORS" | awk 'NF { printf "%s\tpriority:%d\n", $1, ++n }' >"$ROOT$LIST_PATH"
